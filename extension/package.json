@@ -1,0 +1,57 @@
+{
+  "name": "gitfill-vscode",
+  "displayName": "GitFill",
+  "description": "Understand, explain and document your code with evidence: explanations with sources and diagrams, doc comments with preview, local change and commit analysis.",
+  "version": "0.1.0",
+  "publisher": "gitfill",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages", "Other"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "gitfill.signIn", "title": "GitFill: Sign in (server URL and API token)" },
+      { "command": "gitfill.signOut", "title": "GitFill: Sign out" },
+      { "command": "gitfill.explainSelection", "title": "GitFill: Explain selected code" },
+      { "command": "gitfill.explainFile", "title": "GitFill: Explain this file" },
+      { "command": "gitfill.askRepository", "title": "GitFill: Ask a question about this repository" },
+      { "command": "gitfill.generateDiagram", "title": "GitFill: Generate a diagram for the selection or file" },
+      { "command": "gitfill.generateDocs", "title": "GitFill: Generate documentation comments (preview)" },
+      { "command": "gitfill.explainWorkingChanges", "title": "GitFill: Explain working-tree changes" },
+      { "command": "gitfill.explainStagedChanges", "title": "GitFill: Explain staged changes" },
+      { "command": "gitfill.compareLocalCommits", "title": "GitFill: Compare two local commits or branches" },
+      { "command": "gitfill.checkReadmeDrift", "title": "GitFill: Check README against working-tree changes" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "gitfill.explainSelection", "when": "editorHasSelection", "group": "gitfill@1" },
+        { "command": "gitfill.explainFile", "group": "gitfill@2" },
+        { "command": "gitfill.generateDiagram", "group": "gitfill@3" },
+        { "command": "gitfill.generateDocs", "group": "gitfill@4" }
+      ],
+      "scm/title": [
+        { "command": "gitfill.explainWorkingChanges", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "GitFill",
+      "properties": {
+        "gitfill.serverUrl": { "type": "string", "default": "http://localhost:3000", "description": "GitFill server URL. Create an API token under Settings in the web app." },
+        "gitfill.maxContextFiles": { "type": "number", "default": 60, "description": "Maximum number of workspace files sent with a request (the active file and its neighbours first)." },
+        "gitfill.excludeGlobs": { "type": "array", "items": { "type": "string" }, "default": ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/*.lock", "**/*.min.*"], "description": "Files never sent to the server." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5"
+  }
+}

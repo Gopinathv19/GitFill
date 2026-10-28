@@ -1,0 +1,144 @@
+@import "tailwindcss";
+
+/* Design tokens match SysOne (shadcn slate). Light by default, `.dark` on <html> for dark. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 222.2 84% 4.9%;
+  --radius: 0.625rem;
+  --sidebar: 0 0% 98%;
+  --sidebar-foreground: 240 5.3% 26.1%;
+  --sidebar-accent: 240 4.8% 95.9%;
+  --sidebar-border: 220 13% 91%;
+  --dot: 214.3 31.8% 86%;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 98%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 212.7 26.8% 83.9%;
+  --sidebar: 240 5.9% 10%;
+  --sidebar-foreground: 240 4.8% 95.9%;
+  --sidebar-accent: 240 3.7% 15.9%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --dot: 217.2 32.6% 20%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+.dot-grid {
+  background-image: radial-gradient(hsl(var(--dot)) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Document typography for generated Markdown (handbooks, reports, chat answers). */
+.gf-prose {
+  font-size: 0.9rem;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+  overflow-wrap: anywhere;
+}
+.gf-prose > :first-child { margin-top: 0; }
+.gf-prose h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; margin: 1.6em 0 0.6em; line-height: 1.25; }
+.gf-prose h2 { font-size: 1.2rem; font-weight: 600; margin: 1.8em 0 0.6em; padding-bottom: 0.3em; border-bottom: 1px solid hsl(var(--border)); }
+.gf-prose h3 { font-size: 1.02rem; font-weight: 600; margin: 1.4em 0 0.5em; }
+.gf-prose h4 { font-size: 0.92rem; font-weight: 600; margin: 1.2em 0 0.4em; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; }
+.gf-prose p { margin: 0.6em 0; }
+.gf-prose ul, .gf-prose ol { margin: 0.5em 0 0.5em 1.4em; }
+.gf-prose ul { list-style: disc; }
+.gf-prose ol { list-style: decimal; }
+.gf-prose li { margin: 0.2em 0; }
+.gf-prose li > ul, .gf-prose li > ol { margin-top: 0.2em; margin-bottom: 0.2em; }
+.gf-prose a { color: hsl(222 70% 45%); text-decoration: underline; text-underline-offset: 2px; }
+.dark .gf-prose a { color: hsl(213 90% 72%); }
+.gf-prose code { font-family: var(--font-mono); font-size: 0.82em; background: hsl(var(--muted)); border-radius: 4px; padding: 0.12em 0.35em; }
+.gf-prose pre { background: hsl(var(--muted)); border: 1px solid hsl(var(--border)); border-radius: var(--radius-md); padding: 0.8em 1em; overflow-x: auto; margin: 0.8em 0; font-size: 0.8rem; line-height: 1.5; }
+.gf-prose pre code { background: transparent; padding: 0; font-size: inherit; }
+.gf-prose blockquote { border-left: 3px solid hsl(var(--border)); margin: 0.8em 0; padding: 0.2em 0 0.2em 1em; color: hsl(var(--muted-foreground)); }
+.gf-prose table { width: 100%; border-collapse: collapse; margin: 0.8em 0; font-size: 0.82rem; display: block; overflow-x: auto; }
+.gf-prose th, .gf-prose td { border: 1px solid hsl(var(--border)); padding: 0.4em 0.6em; text-align: left; vertical-align: top; }
+.gf-prose th { background: hsl(var(--muted)); font-weight: 600; }
+.gf-prose hr { border: 0; border-top: 1px solid hsl(var(--border)); margin: 1.6em 0; }
+.gf-prose details { border: 1px solid hsl(var(--border)); border-radius: var(--radius-md); padding: 0.4em 0.8em; margin: 0.6em 0; font-size: 0.82rem; }
+.gf-prose summary { cursor: pointer; color: hsl(var(--muted-foreground)); }
+.gf-prose sup a { text-decoration: none; font-weight: 600; }
+.gf-prose section.footnotes { margin-top: 2em; padding-top: 1em; border-top: 1px solid hsl(var(--border)); font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+.gf-prose section.footnotes h2 { display: none; }
+.gf-prose section.footnotes ol { margin-left: 1.2em; }
+.gf-prose img { max-width: 100%; }
+.gf-prose sub { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.gf-prose input[type="checkbox"] { margin-right: 0.4em; }
