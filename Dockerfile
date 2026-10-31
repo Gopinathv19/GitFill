@@ -11,7 +11,7 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libreoffice-impress poppler-utils fonts-crosextra-carlito fonts-liberation fonts-dejavu-core \
+  && apt-get install -y --no-install-recommends git libreoffice-impress poppler-utils fonts-crosextra-carlito fonts-liberation fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production PORT=8080 ARTIFACT_STORAGE_PATH=/data

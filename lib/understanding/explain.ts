@@ -17,8 +17,8 @@ export interface ExplanationResult {
   mermaid: string | null;
   claims: Claim[];
   agent: { turns: number; toolCalls: number };
-  /** Which retrieval ranked the context: Memora's RAG pipeline or the local keyword heuristic. */
-  retrieval: "memora" | "heuristic";
+  /** How the code was found: on-demand search, Memora's RAG pipeline, or the local keyword heuristic. */
+  retrieval: "search" | "memora" | "heuristic";
 }
 
 /** Smaller inline budget than batch jobs: questions are interactive. */
@@ -94,13 +94,25 @@ export async function explainCode(opts: {
 
   await loopStep.succeed({ turns, toolCalls });
 
-  const renderStep = await opts.recorder.start("step", "verify_and_render");
-  const parsed = parseAnswer(answer);
-  const { claims, refs } = verifyCitations(parsed.body, context.files, { refPrefix: context.refPrefix, firstIndex: context.claims.length + 1, max: MAX_CITATIONS });
+  const { spec, markdown, claims } = await finishAnswer({ answer, files: context.files, meta: snapshot, request: opts.request, recorder: opts.recorder, refPrefix: context.refPrefix, firstIndex: context.claims.length + 1 });
   context.claims.push(...claims);
-  const spec = validateReferences(toSpec(parsed, claims, opts.request), context);
-  const markdown = renderExplanation(spec, snapshot, claims, refs);
-  await renderStep.succeed({
+  return { spec, markdown, mermaid: diagramMermaid(spec.diagram), claims, agent: { turns, toolCalls }, retrieval: retrieved.ranked ? "memora" : "heuristic" };
+}
+
+/** What rendering needs to know about the analyzed source (link target, commit, display name). */
+export type AnswerMeta = Pick<SourceSnapshot, "connector" | "sourceUrl" | "version" | "displayName" | "branch">;
+
+/**
+ * Turns the model's Markdown answer into the final explanation: splits out title/diagram/sections,
+ * verifies every inline `path:lines` citation against `files` (the exact commit), and renders it.
+ */
+export async function finishAnswer(opts: { answer: string; files: ReadonlyMap<string, SourceFile>; meta: AnswerMeta; request: AskRequest; recorder: RunRecorder; refPrefix: string; firstIndex: number }) {
+  const step = await opts.recorder.start("step", "verify_and_render");
+  const parsed = parseAnswer(opts.answer);
+  const { claims, refs } = verifyCitations(parsed.body, opts.files, { refPrefix: opts.refPrefix, firstIndex: opts.firstIndex, max: MAX_CITATIONS });
+  const spec = validateReferences(toSpec(parsed, claims, opts.request), opts.files);
+  const markdown = renderExplanation(spec, opts.meta, claims, refs);
+  await step.succeed({
     citations: refs.length,
     claims: claims.length,
     verified: claims.filter((c) => c.status === "verified").length,
@@ -108,7 +120,7 @@ export async function explainCode(opts: {
     diagram: parsed.diagram ? "ok" : parsed.diagramError ? `dropped: ${parsed.diagramError}` : "none",
     markdownChars: markdown.length,
   });
-  return { spec, markdown, mermaid: diagramMermaid(spec.diagram), claims, agent: { turns, toolCalls }, retrieval: retrieved.ranked ? "memora" : "heuristic" };
+  return { spec, markdown, claims };
 }
 
 /** Builds the stored spec from the parsed Markdown answer and its verified citations. */
@@ -173,10 +185,10 @@ function rankForQuestion(snapshot: SourceSnapshot, request: AskRequest): SourceS
   return { ...snapshot, files };
 }
 
-function validateReferences(spec: ExplanationSpec, context: RepositoryContext): ExplanationSpec {
+function validateReferences(spec: ExplanationSpec, files: ReadonlyMap<string, SourceFile>): ExplanationSpec {
   const references = spec.references
     .map((r) => {
-      const file = context.files.get(normalizePath(r.path));
+      const file = files.get(normalizePath(r.path));
       if (!file) return null;
       const start = Math.min(r.startLine, file.lineCount);
       const end = Math.min(Math.max(r.endLine, start), file.lineCount);
@@ -187,7 +199,7 @@ function validateReferences(spec: ExplanationSpec, context: RepositoryContext): 
 }
 
 /** `citationRefs` maps each inline `path:lines` citation in the answer to its claim (see verifyCitations). */
-export function renderExplanation(spec: ExplanationSpec, snapshot: SourceSnapshot, claims: Claim[], citationRefs: Array<string | null>): string {
+export function renderExplanation(spec: ExplanationSpec, snapshot: AnswerMeta, claims: Claim[], citationRefs: Array<string | null>): string {
   const ctx = makeRenderContext([{ snapshot, claims }]);
   const answer = replaceCitations(spec.answer.trim(), citationRefs, (ref, citation) => `${location(citation, ctx)}${cite([ref], ctx)}`);
   const out: string[] = [`### ${spec.title}`, "", answer, ""];

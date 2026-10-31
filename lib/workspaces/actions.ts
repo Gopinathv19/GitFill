@@ -122,7 +122,7 @@ export async function askRepository(
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   const url = requireUrl(repo);
   const recorder = opts.recorder ?? new MemoryRecorder();
-  const { snapshot, result } = await answerGitHubQuestion({ url, branch: request.branch ?? repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), request, recorder });
+  const { source: snapshot, result } = await answerGitHubQuestion({ url, branch: request.branch ?? repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), request, recorder });
   if (!opts.recorder) logTimings(recorder, `ask ${repo.owner}/${repo.name}: ${request.question.slice(0, 60)}`);
   let documentId: string | null = null;
   if (opts.save) {

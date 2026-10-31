@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,7 +20,7 @@ const DETAILS = /<details>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>
  * GitFill itself emits (<details> around diagram sources, legacy <sub> footers) become components.
  * With `evidence`, `#gf-ev-<ref>` links render as status chips (see splitAnswer).
  */
-export function Markdown({ children, className, evidence }: { children: string; className?: string; evidence?: EvidenceChips }) {
+export const Markdown = memo(function Markdown({ children, className, evidence }: { children: string; className?: string; evidence?: EvidenceChips }) {
   const text = children.replace(/<sub>([\s\S]*?)<\/sub>/g, (_, inner: string) => `*${inner.trim()}*`);
   const segments: Array<{ md: string; summary?: string }> = [];
   let last = 0;
@@ -43,7 +43,7 @@ export function Markdown({ children, className, evidence }: { children: string; 
       )}
     </div>
   );
-}
+});
 
 const CHIP_TONE: Record<EvidenceStatus, string> = {
   verified: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-400",

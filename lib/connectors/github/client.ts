@@ -27,6 +27,8 @@ export interface RepoInfo {
   topics: string[];
   license: string | null;
   htmlUrl: string;
+  /** Repository size in KB as GitHub reports it. */
+  sizeKb: number;
 }
 
 export interface CommitInfo {
@@ -93,6 +95,11 @@ export class GitHubClient {
     return Boolean(this.token);
   }
 
+  /** The token for a single `git fetch` of a repository this client can read. Never log or store it. */
+  gitFetchToken(): string | undefined {
+    return this.token;
+  }
+
   async getRepo(owner: string, repo: string): Promise<RepoInfo> {
     const data = await this.json<Record<string, unknown>>(this.api(`/repos/${seg(owner)}/${seg(repo)}`));
     const license = data.license as { spdx_id?: string } | null;
@@ -106,6 +113,7 @@ export class GitHubClient {
       topics: Array.isArray(data.topics) ? data.topics.map(String) : [],
       license: license?.spdx_id ?? null,
       htmlUrl: String(data.html_url),
+      sizeKb: Number(data.size ?? 0),
     };
   }
 

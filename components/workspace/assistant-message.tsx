@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { CircleCheck, CircleHelp, CircleX, FileCode2, MessageSquareText, ShieldCheck } from "lucide-react";
 import { Markdown } from "@/components/shared/markdown";
 import { splitAnswer, type EvidenceItem, type EvidenceStatus } from "@/lib/client/answer-parts";
@@ -16,7 +16,7 @@ const STATUS: Record<EvidenceStatus, { label: string; icon: typeof CircleCheck; 
  * An agent reply. Answers with evidence get two tabs: the answer (citations as numbered status
  * chips) and the evidence list, so the footnotes don't bury the answer. Plain replies render as-is.
  */
-export function AssistantMessage({ content, onAsk }: { content: string; onAsk?: (question: string) => void }) {
+export const AssistantMessage = memo(function AssistantMessage({ content, onAsk }: { content: string; onAsk?: (question: string) => void }) {
   const parts = useMemo(() => splitAnswer(content), [content]);
   const [tab, setTab] = useState<"answer" | "evidence">("answer");
   const [focused, setFocused] = useState<string | null>(null);
@@ -112,7 +112,7 @@ export function AssistantMessage({ content, onAsk }: { content: string; onAsk?: 
       )}
     </div>
   );
-}
+});
 
 function EvidenceRow({ item, focused }: { item: EvidenceItem; focused: boolean }) {
   const { label, icon: Icon, tone } = STATUS[item.status];

@@ -33,6 +33,20 @@ export function describeActivity(a: Activity): string | null {
       return `Investigating “${str(i.question).slice(0, 90)}”`;
     case "snapshot":
       return done ? (o.cache === "hit" ? `Loaded repository from cache (${o.files} files @ ${o.commit})` : `Loaded repository (${o.files} files @ ${o.commit})`) : "Loading repository";
+    case "repo_head":
+      return done ? `Resolved ${o.branch} → ${o.commit}` : "Resolving the branch";
+    case "repo_open":
+      return done ? (o.origin === "disk" ? "Opened repository (already on disk)" : o.origin === "archive" ? "Restored repository from the archive cache" : `Fetched repository with git (${((Number(o.ms) || 0) / 1000).toFixed(1)}s)`) : "Opening repository";
+    case "repo_map":
+      return done ? `Mapped the repository (${o.files} files${o.routes ? `, ${o.routes} routes` : ""})` : "Mapping the repository";
+    case "fallback_to_snapshot":
+      return "Repository store unavailable; used the snapshot instead";
+    case "grep":
+      return `Searched for “${str(i.pattern)}”${i.path ? ` in ${str(i.path)}` : ""}${i.glob ? ` (${str(i.glob)})` : ""}`;
+    case "list_files":
+      return `Listed ${str(i.dir) || "files"}${i.glob ? ` (${str(i.glob)})` : ""}`;
+    case "find_definition":
+      return `Found definition of ${str(i.name)}`;
     case "github_tree":
       return done ? `Read file tree (${o.entries} entries)` : "Reading file tree";
     case "github_files":

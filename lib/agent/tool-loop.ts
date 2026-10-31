@@ -36,6 +36,11 @@ export interface ToolLoopOptions {
   finishOnText?: boolean;
   /** Stream the model's text to `recorder.live` as it is written (used for answers shown live). */
   streamText?: boolean;
+  /**
+   * Once the conversation passes `maxChars`, tool results older than the last `keepTurns` turns are
+   * shortened to a one-line stub, so long searches don't resend everything they ever read.
+   */
+  trimHistory?: { keepTurns: number; maxChars: number };
 }
 
 export interface ToolLoopResult<T> {
@@ -69,12 +74,14 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
   const messages: ChatCompletionMessageParam[] = [{ role: "system", content: opts.system }, ...opts.messages];
   let toolCalls = 0;
   let nudges = 0;
+  const toolMessages: Array<{ message: { content: string }; turn: number; trimmed: boolean }> = [];
 
   // On the last turn only finishing is possible, so a long exploration ends with what it found
   // instead of failing the whole job.
   const finalTools = terminalNames.length ? tools.filter((t) => t.type === "function" && terminalNames.includes(t.function.name)) : tools;
 
   for (let turn = 1; turn <= maxTurns; turn++) {
+    if (opts.trimHistory) trimOldResults(messages, toolMessages, turn, opts.trimHistory);
     const lastTurn = turn === maxTurns && maxTurns > 1;
     if (lastTurn) messages.push({ role: "user", content: `This is your last turn. Do not research further: ${finish} now with what you have, noting anything left unclear.` });
     const request = { model: opts.model, messages, tools: lastTurn ? finalTools : tools, purpose: `${opts.purpose}:turn${turn}`, maxTokens: opts.maxTokens, reasoningEffort: opts.reasoningEffort };
@@ -109,13 +116,19 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
     messages.push({ role: "assistant", content: res.message.content ?? null, tool_calls: res.message.tool_calls });
     let terminalResult: { value: T } | undefined;
 
-    for (const call of calls) {
-      toolCalls++;
+    // Independent calls from one turn run concurrently (searches and reads are I/O-bound).
+    const overBudget = calls.map(() => ++toolCalls > maxToolCalls);
+    const outputs = await Promise.all(calls.map((call, i) => executeCall(byName.get(call.function.name), call.function.name, call.function.arguments, opts.recorder, overBudget[i]!)));
+    calls.forEach((call, i) => {
       const tool = byName.get(call.function.name);
-      const output = await executeCall(tool, call.function.name, call.function.arguments, opts.recorder, toolCalls > maxToolCalls);
+      const output = outputs[i]!;
       if (output.ok && (typeof tool?.terminal === "function" ? tool.terminal(output.result) : tool?.terminal)) terminalResult = { value: output.input as T };
-      messages.push({ role: "tool", tool_call_id: call.id, content: truncate(JSON.stringify(output.ok ? output.result : { error: output.error })) });
-    }
+      // Text results go to the model as-is; anything else as JSON.
+      const content = truncate(output.ok ? (typeof output.result === "string" ? output.result : JSON.stringify(output.result)) : JSON.stringify({ error: output.error }));
+      const message = { role: "tool" as const, tool_call_id: call.id, content };
+      messages.push(message);
+      toolMessages.push({ message, turn, trimmed: false });
+    });
 
     if (terminalResult) return { result: terminalResult.value, turns: turn, toolCalls };
     if (toolCalls > maxToolCalls) {
@@ -167,6 +180,17 @@ async function executeCall(
     const message = err instanceof Error ? err.message : "Tool failed";
     await event.fail(message.slice(0, 300));
     return { ok: false, error: message.slice(0, 500) };
+  }
+}
+
+function trimOldResults(messages: ChatCompletionMessageParam[], toolMessages: Array<{ message: { content: string }; turn: number; trimmed: boolean }>, turn: number, opts: { keepTurns: number; maxChars: number }) {
+  const size = messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0);
+  if (size <= opts.maxChars) return;
+  for (const t of toolMessages) {
+    if (t.trimmed || t.turn > turn - 1 - opts.keepTurns) continue;
+    const head = t.message.content.split("\n")[0]!.slice(0, 160);
+    t.message.content = `[earlier result trimmed to save context; first line: ${head}. Re-run the tool if you need it again.]`;
+    t.trimmed = true;
   }
 }
 

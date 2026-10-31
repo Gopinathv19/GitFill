@@ -13,7 +13,7 @@ import { askRequestSchema } from "@/lib/understanding/schemas";
  * Latency benchmark for code questions: runs a fixed question set through the same pipeline
  * as the workspace ask/chat paths and saves per-step timings plus the answers.
  *
- *   npx tsx scripts/bench-ask.ts <github-url> [--branch b] [--questions file.txt] [--cold] [--label name]
+ *   npx tsx scripts/bench-ask.ts <github-url> [--branch b] [--questions file.txt] [--cold] [--label name] [--mode snapshot|agentic]
  *   npx tsx scripts/bench-ask.ts --compare storage/bench/a.json storage/bench/b.json
  *
  * Without --cold only the first question pays for the snapshot; the rest hit the cache, like a chat session.
@@ -64,8 +64,8 @@ async function main() {
     const started = Date.now();
     console.log(`\n[${i + 1}/${questions.length}] ${question}`);
     try {
-      const { snapshot, result } = await answerGitHubQuestion({ url: args.url, branch: args.branch, client, request: askRequestSchema.parse({ question }), recorder });
-      out.commit = snapshot.version;
+      const { source, result } = await answerGitHubQuestion({ url: args.url, branch: args.branch, client, request: askRequestSchema.parse({ question }), recorder, mode: args.mode });
+      out.commit = source.version;
       const totalMs = Date.now() - started;
       out.rows.push({
         question,
@@ -136,13 +136,14 @@ async function compare([a, b]: [string, string]) {
 }
 
 function parseArgs(argv: string[]) {
-  const args = { url: "", branch: undefined as string | undefined, questions: undefined as string | undefined, cold: false, label: "baseline", compare: undefined as [string, string] | undefined };
+  const args = { url: "", branch: undefined as string | undefined, questions: undefined as string | undefined, cold: false, label: "baseline", compare: undefined as [string, string] | undefined, mode: undefined as "snapshot" | "agentic" | undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--branch") args.branch = argv[++i];
     else if (a === "--questions") args.questions = argv[++i];
     else if (a === "--label") args.label = argv[++i]!.replace(/[^\w.-]/g, "_");
     else if (a === "--cold") args.cold = true;
+    else if (a === "--mode") args.mode = argv[++i] === "agentic" ? "agentic" : "snapshot";
     else if (a === "--compare") args.compare = [argv[++i]!, argv[++i]!];
     else args.url = a;
   }

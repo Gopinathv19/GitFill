@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, GitCompareArrows } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,6 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
   const user = useUser();
   const userName = user.name ?? user.login;
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
-  const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The turn being streamed, and the steps of turns finished in this view (keyed by reply id).
@@ -59,12 +58,12 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
     if (live) bottom.current?.scrollIntoView({ block: "end" });
   }, [live?.activities.length, live?.draft.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function send(message: string) {
+  /** Sends a message; resolves false when it never reached the server (the composer then restores the text). */
+  async function send(message: string): Promise<boolean> {
     const trimmed = message.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || sending) return true;
     setSending(true);
     setError(null);
-    setText("");
     const optimistic: ChatMessage = { id: `tmp-${Date.now()}`, role: "user", content: trimmed, jobIds: [], createdAt: new Date().toISOString() };
     setMessages((m) => [...(m ?? []), optimistic]);
     const startedAt = Date.now();
@@ -92,16 +91,21 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
       void refreshSessions();
     } catch (err) {
       // Once the server has the message it keeps working; only un-send when it never arrived.
-      if (!accepted) {
-        setMessages((m) => (m ?? []).filter((x) => x.id !== optimistic.id));
-        setText(trimmed);
-      }
+      if (!accepted) setMessages((m) => (m ?? []).filter((x) => x.id !== optimistic.id));
       setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : errorMessage(err, "Message failed to send."));
+      return accepted;
     } finally {
       setLive(null);
       setSending(false);
     }
+    return true;
   }
+
+  // Stable callbacks so memoized answers and the composer don't re-render on unrelated updates.
+  const latestSend = useRef(send);
+  latestSend.current = send;
+  const submit = useCallback((q: string) => latestSend.current(q), []);
+  const ask = useCallback((q: string) => void latestSend.current(q), []);
 
   const analyzable = repositories.filter((r) => r.analyzable);
   const suggestions = analyzable.length
@@ -142,7 +146,7 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
                 ) : (
                   <>
                     {traces[m.id] && <TurnTrace seconds={traces[m.id]!.seconds} activities={traces[m.id]!.activities} />}
-                    <AssistantMessage content={m.content} onAsk={sending ? undefined : (q) => void send(q)} />
+                    <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} />
                   </>
                 )}
                 {m.jobIds.map((id) => (
@@ -182,35 +186,54 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
             </div>
           )}
           {error && <p role="alert" className="mb-2 text-xs text-destructive">{error}</p>}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send(text);
-            }}
-            className="flex items-end gap-2 rounded-lg border bg-background p-2 focus-within:ring-2 focus-within:ring-ring"
-          >
-            <textarea
-              aria-label="Message GitFill"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send(text);
-                }
-              }}
-              rows={1}
-              placeholder="Ask a follow-up, or request a handbook, comparison or presentation…"
-              className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
-            />
-            <Button type="submit" size="icon" className="size-9 shrink-0" disabled={sending || !text.trim()} aria-label="Send">
-              <ArrowUp />
-            </Button>
-          </form>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+          <Composer onSend={submit} sending={sending} />
         </div>
       </div>
     </div>
   );
 }
+
+/**
+ * The message box. It owns the text it is typing, so a keystroke re-renders only this component,
+ * not the whole conversation (which re-parsed every answer's Markdown on each key).
+ */
+const Composer = memo(function Composer({ onSend, sending }: { onSend: (text: string) => Promise<boolean>; sending: boolean }) {
+  const [text, setText] = useState("");
+  async function submit() {
+    const value = text;
+    if (!value.trim() || sending) return;
+    setText("");
+    if (!(await onSend(value))) setText(value);
+  }
+  return (
+    <>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        className="flex items-end gap-2 rounded-lg border bg-background p-2 focus-within:ring-2 focus-within:ring-ring"
+      >
+        <textarea
+          aria-label="Message GitFill"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+          rows={1}
+          placeholder="Ask a follow-up, or request a handbook, comparison or presentation…"
+          className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <Button type="submit" size="icon" className="size-9 shrink-0" disabled={sending || !text.trim()} aria-label="Send">
+          <ArrowUp />
+        </Button>
+      </form>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+    </>
+  );
+});
 

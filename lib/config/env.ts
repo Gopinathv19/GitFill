@@ -33,6 +33,19 @@ const envSchema = z.object({
   MEMORA_API_TOKEN: z.string().min(1).optional(),
   /** How long jobs wait for a fresh Memora index before continuing without it. */
   MEMORA_INDEX_TIMEOUT_MS: z.coerce.number().int().min(0).default(150_000),
+  /** Code questions: "agentic" searches the repository on demand (git store + search tools); "snapshot" uses the 200-file snapshot. */
+  GITFILL_SEARCH: z.enum(["snapshot", "agentic"]).default("snapshot"),
+  /** In-process repository store: where bare repositories live (default <ARTIFACT_STORAGE_PATH>/repos). */
+  GIT_STORE_DIR: z.string().optional(),
+  GIT_STORE_MAX_GB: z.coerce.number().positive().default(5),
+  GIT_STORE_MAX_REPO_MB: z.coerce.number().positive().default(1500),
+  /** Shared archive cache of repositories: "gs://bucket/prefix" (Cloud Storage) or a directory. Optional. */
+  REPO_ARCHIVE_CACHE: z.string().optional(),
+  /** When set, repositories are served by a separate repo service (scripts/repo-service.ts) instead of in-process. */
+  REPO_SERVICE_URL: z.string().url().optional(),
+  /** Shared secret between the app and the repo service. Required for the service outside development. */
+  REPO_SERVICE_TOKEN: z.string().min(16).optional(),
+  REPO_SERVICE_PORT: z.coerce.number().int().default(4100),
   /** "true" prints a per-step timing breakdown of chat turns and code questions to the server log. */
   GITFILL_TIMINGS: z.enum(["true", "false"]).default("false"),
 });
