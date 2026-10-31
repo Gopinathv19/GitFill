@@ -120,6 +120,21 @@ export const workspaceRepositories = pgTable(
   (t) => [index("workspace_repositories_ws_idx").on(t.workspaceId)],
 );
 
+/** One conversation with the agent inside a workspace; a workspace can hold many. */
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default("New session"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_sessions_ws_idx").on(t.workspaceId, t.updatedAt)],
+);
+
 export const chatMessages = pgTable(
   "chat_messages",
   {
@@ -127,13 +142,16 @@ export const chatMessages = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
     role: chatRole("role").notNull(),
     content: text("content").notNull(),
     /** Jobs started by this message (shown as live job cards in the chat). */
     jobIds: jsonb("job_ids").notNull().default([]),
     createdAt: createdAt(),
   },
-  (t) => [index("chat_messages_ws_idx").on(t.workspaceId, t.createdAt)],
+  (t) => [index("chat_messages_ws_idx").on(t.workspaceId, t.createdAt), index("chat_messages_session_idx").on(t.sessionId, t.createdAt)],
 );
 
 export const projects = pgTable(

@@ -1,36 +1,63 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Bot, GitCompareArrows, Loader2 } from "lucide-react";
-import { Markdown } from "@/components/shared/markdown";
+import { ArrowUp, Bot, GitCompareArrows } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ReuseDialog } from "./reuse-dialog";
-import { api, errorMessage } from "@/lib/client/api";
+import { type Activity, upsertActivity } from "@/lib/client/activity";
+import { api, ApiError, errorMessage } from "@/lib/client/api";
+import { postStream } from "@/lib/client/stream";
+import { refreshSessions, takePendingMessage } from "@/lib/client/sessions-store";
 import type { ChatMessage, RepoView } from "@/lib/client/types";
 import { cn, getInitials } from "@/lib/utils";
+import { AssistantMessage } from "./assistant-message";
 import { JobCard } from "./job-card";
+import { LiveTurn, TurnTrace } from "./live-turn";
 import { useUser } from "@/components/layout/user-context";
 
-/** The workspace conversation with GitFill's agent. Jobs it starts appear as live cards. */
-export function ChatPanel({ workspaceId, repositories, onActivity }: { workspaceId: string; repositories: RepoView[]; onActivity: () => void }) {
+/**
+ * One chat session with GitFill's agent. Jobs it starts appear as live cards.
+ * Mount with `key={sessionId}` so switching sessions starts from a clean state.
+ */
+export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: { workspaceId: string; sessionId: string; repositories: RepoView[]; onActivity: () => void }) {
   const user = useUser();
   const userName = user.name ?? user.login;
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The turn being streamed, and the steps of turns finished in this view (keyed by reply id).
+  const [live, setLive] = useState<{ startedAt: number; activities: Activity[]; draft: string } | null>(null);
+  const [traces, setTraces] = useState<Record<string, { seconds: number; activities: Activity[] }>>({});
   const bottom = useRef<HTMLDivElement>(null);
+  // Guards against React's dev-mode double effect sending the first message twice.
+  const started = useRef(false);
 
   useEffect(() => {
-    api<ChatMessage[]>(`/api/workspaces/${workspaceId}/chat`)
-      .then(setMessages)
+    if (started.current) return;
+    started.current = true;
+    const first = takePendingMessage(sessionId);
+    if (first) {
+      // A brand-new session from the new-session screen: nothing to load, send right away.
+      setMessages([]);
+      void send(first);
+      return;
+    }
+    api<{ messages: ChatMessage[] }>(`/api/sessions/${sessionId}`)
+      .then((r) => setMessages(r.messages))
       .catch((e: Error) => setError(e.message));
-  }, [workspaceId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per mounted session
+  }, [sessionId]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages?.length, sending]);
+
+  // Follow the live turn as steps and text arrive (instant scroll avoids jitter while streaming).
+  useEffect(() => {
+    if (live) bottom.current?.scrollIntoView({ block: "end" });
+  }, [live?.activities.length, live?.draft.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send(message: string) {
     const trimmed = message.trim();
@@ -40,15 +67,38 @@ export function ChatPanel({ workspaceId, repositories, onActivity }: { workspace
     setText("");
     const optimistic: ChatMessage = { id: `tmp-${Date.now()}`, role: "user", content: trimmed, jobIds: [], createdAt: new Date().toISOString() };
     setMessages((m) => [...(m ?? []), optimistic]);
+    const startedAt = Date.now();
+    setLive({ startedAt, activities: [], draft: "" });
+    let activities: Activity[] = [];
+    let stored: ChatMessage[] | null = null;
+    let accepted = false;
     try {
-      const res = await api<{ messages: ChatMessage[] }>(`/api/workspaces/${workspaceId}/chat`, { method: "POST", body: JSON.stringify({ message: trimmed }) });
-      setMessages((m) => [...(m ?? []).filter((x) => x.id !== optimistic.id), ...res.messages]);
-      if (res.messages.some((x) => x.jobIds.length)) onActivity();
+      await postStream(`/api/sessions/${sessionId}/messages`, { message: trimmed }, (event, data) => {
+        if (event === "user") accepted = true;
+        else if (event === "activity") {
+          activities = upsertActivity(activities, data as Activity);
+          setLive((l) => l && { ...l, activities });
+        } else if (event === "text") setLive((l) => l && { ...l, draft: l.draft + (data as { delta: string }).delta });
+        else if (event === "text_reset") setLive((l) => l && { ...l, draft: "" });
+        else if (event === "done") stored = (data as { messages: ChatMessage[] }).messages;
+        else if (event === "error") throw new Error((data as { message: string }).message);
+      });
+      const final = stored as ChatMessage[] | null;
+      if (!final) throw new Error("The connection closed before the answer arrived. Reload in a moment to see it.");
+      setMessages((m) => [...(m ?? []).filter((x) => x.id !== optimistic.id), ...final]);
+      const reply = final.find((x) => x.role === "assistant");
+      if (reply) setTraces((t) => ({ ...t, [reply.id]: { seconds: Math.round((Date.now() - startedAt) / 1000), activities } }));
+      if (final.some((x) => x.jobIds.length)) onActivity();
+      void refreshSessions();
     } catch (err) {
-      setMessages((m) => (m ?? []).filter((x) => x.id !== optimistic.id));
-      setText(trimmed);
-      setError(errorMessage(err, "Message failed to send."));
+      // Once the server has the message it keeps working; only un-send when it never arrived.
+      if (!accepted) {
+        setMessages((m) => (m ?? []).filter((x) => x.id !== optimistic.id));
+        setText(trimmed);
+      }
+      setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : errorMessage(err, "Message failed to send."));
     } finally {
+      setLive(null);
       setSending(false);
     }
   }
@@ -86,11 +136,14 @@ export function ChatPanel({ workspaceId, repositories, onActivity }: { workspace
                   {m.role === "user" ? getInitials(userName) : "G"}
                 </AvatarFallback>
               </Avatar>
-              <div className={cn("flex max-w-[85%] flex-col gap-2", m.role === "user" && "items-end")}>
+              <div className={cn("flex max-w-[85%] flex-col gap-2", m.role === "user" ? "items-end" : "w-full")}>
                 {m.role === "user" ? (
                   <div className="whitespace-pre-wrap rounded-lg bg-primary px-3.5 py-2 text-sm text-primary-foreground">{m.content}</div>
                 ) : (
-                  <div className="rounded-lg bg-muted px-3.5 py-2 text-sm"><Markdown className="text-sm">{m.content}</Markdown></div>
+                  <>
+                    {traces[m.id] && <TurnTrace seconds={traces[m.id]!.seconds} activities={traces[m.id]!.activities} />}
+                    <AssistantMessage content={m.content} onAsk={sending ? undefined : (q) => void send(q)} />
+                  </>
                 )}
                 {m.jobIds.map((id) => (
                   <div key={id} className="w-full min-w-72">
@@ -100,9 +153,14 @@ export function ChatPanel({ workspaceId, repositories, onActivity }: { workspace
               </div>
             </div>
           ))}
-          {sending && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> GitFill is working…
+          {live && (
+            <div className="flex gap-3">
+              <Avatar className="mt-0.5 size-7">
+                <AvatarFallback className="bg-primary text-[11px] text-primary-foreground">G</AvatarFallback>
+              </Avatar>
+              <div className="flex w-full max-w-[85%] flex-col">
+                <LiveTurn startedAt={live.startedAt} activities={live.activities} draft={live.draft} />
+              </div>
             </div>
           )}
           <div ref={bottom} />
@@ -142,7 +200,7 @@ export function ChatPanel({ workspaceId, repositories, onActivity }: { workspace
                 }
               }}
               rows={1}
-              placeholder="Ask how the code works, or request a handbook, commit comparison, implementation brief or presentation…"
+              placeholder="Ask a follow-up, or request a handbook, comparison or presentation…"
               className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
             />
             <Button type="submit" size="icon" className="size-9 shrink-0" disabled={sending || !text.trim()} aria-label="Send">

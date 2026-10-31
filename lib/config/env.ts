@@ -33,6 +33,8 @@ const envSchema = z.object({
   MEMORA_API_TOKEN: z.string().min(1).optional(),
   /** How long jobs wait for a fresh Memora index before continuing without it. */
   MEMORA_INDEX_TIMEOUT_MS: z.coerce.number().int().min(0).default(150_000),
+  /** "true" prints a per-step timing breakdown of chat turns and code questions to the server log. */
+  GITFILL_TIMINGS: z.enum(["true", "false"]).default("false"),
 });
 
 export type Env = z.infer<typeof envSchema>;

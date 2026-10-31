@@ -150,7 +150,7 @@ async function ingest(client: GitHubClient, url: string, branch: string | undefi
     const snapshot = await ingestGitHubRepository({ url, branch, client });
     await event.succeed({ repository: snapshot.displayName, commit: snapshot.version.slice(0, 7), files: snapshot.stats.selectedFiles, tree: snapshot.stats.totalEntries });
     remember(snapshotCacheKey(url, branch), snapshot);
-    await indexInMemora(snapshot, recorder);
+    startMemoraIndex(snapshot, recorder);
     return snapshot;
   } catch (err) {
     await event.fail(err instanceof Error ? err.message : "ingest failed");
@@ -158,14 +158,19 @@ async function ingest(client: GitHubClient, url: string, branch: string | undefi
   }
 }
 
-/** Indexes the snapshot in Memora (the RAG pipeline) so agents can retrieve semantically. Never blocks a job on failure. */
-async function indexInMemora(snapshot: SourceSnapshot, recorder: DbRecorder): Promise<void> {
+/**
+ * Starts indexing the snapshot in Memora in the background. Jobs never wait for it: indexing took
+ * 2-3 minutes per handbook, and agents fall back to search_code until the index is ready.
+ */
+function startMemoraIndex(snapshot: SourceSnapshot, recorder: DbRecorder): void {
   const retriever = retrieverFor(snapshot);
   if (!retriever) return;
-  const event = await recorder.start("tool", "index_repository", { backend: retriever.backend, files: snapshot.stats.selectedFiles });
-  const status = await retriever.ensureIndexed();
-  if (status === "unavailable") await event.fail("Memora index unavailable; agents fall back to search_code.");
-  else await event.succeed({ status });
+  void (async () => {
+    const event = await recorder.start("tool", "index_repository", { backend: retriever.backend, files: snapshot.stats.selectedFiles, background: true });
+    const status = await retriever.ensureIndexed().catch(() => "unavailable" as const);
+    if (status === "unavailable") await event.fail("Memora index unavailable; agents fall back to search_code.");
+    else await event.succeed({ status });
+  })().catch(() => undefined);
 }
 
 async function saveSnapshot(db: Database, projectId: string, snapshot: SourceSnapshot, extra: Record<string, unknown>, claims: Claim[]) {

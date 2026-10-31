@@ -1,15 +1,14 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { MuseClient } from "@/lib/ai/client";
 import { MemoryRecorder } from "@/lib/agent/recorder";
 import { githubClientFor } from "@/lib/auth/github-token";
-import { getSnapshot } from "@/lib/connectors/cache";
 import { parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
 import { generationJobs, projects, repositorySnapshots } from "@/lib/db/schema";
 import { saveDocument } from "@/lib/jobs/document-jobs";
 import { kickInlineWorker } from "@/lib/jobs/inline";
 import { ACTIVE_STATUSES, enqueueDocumentJob, enqueueGeneration, enqueueRevision } from "@/lib/jobs/queue";
-import { explainCode } from "@/lib/understanding/explain";
+import { logTimings } from "@/lib/agent/timings";
+import { answerGitHubQuestion } from "@/lib/understanding/ask";
 import { compareRequestSchema, handbookRequestSchema, type AskRequest, type CompareRequest, type HandbookRequest, type ReuseKind } from "@/lib/understanding/schemas";
 import { generateRequestSchema, type GenerateRequest } from "@/lib/validation/request";
 import { assertDeckAccess, getRepository } from "./service";
@@ -112,12 +111,19 @@ export async function listRepositoryCommits(db: Database, userId: string, worksp
  * (or is ingested), the explainer agent works through real tools, and the explanation is
  * returned as Markdown with sources. Optionally saved as a document.
  */
-export async function askRepository(db: Database, userId: string, workspaceId: string, repositoryId: string, request: AskRequest, opts: { save?: boolean } = {}) {
+export async function askRepository(
+  db: Database,
+  userId: string,
+  workspaceId: string,
+  repositoryId: string,
+  request: AskRequest,
+  opts: { save?: boolean; /** Shared with a caller (e.g. a chat turn) that reports timings itself. */ recorder?: MemoryRecorder } = {},
+) {
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   const url = requireUrl(repo);
-  const snapshot = await getSnapshot(url, request.branch ?? repo.defaultBranch ?? undefined, { client: await githubClientFor(db, userId) });
-  const recorder = new MemoryRecorder();
-  const result = await explainCode({ client: new MuseClient(), snapshot, request, recorder });
+  const recorder = opts.recorder ?? new MemoryRecorder();
+  const { snapshot, result } = await answerGitHubQuestion({ url, branch: request.branch ?? repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), request, recorder });
+  if (!opts.recorder) logTimings(recorder, `ask ${repo.owner}/${repo.name}: ${request.question.slice(0, 60)}`);
   let documentId: string | null = null;
   if (opts.save) {
     const [project] = await db.insert(projects).values({ workspaceId, repositoryId, name: `${repo.owner}/${repo.name}`, description: request.question.slice(0, 300) }).returning();

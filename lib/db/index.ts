@@ -28,7 +28,9 @@ export function getDb(): Database {
       // statements; disabling them also means a running server survives schema changes
       // (no "cached plan" errors after a migration or reset).
       const pooled = /-pooler\./.test(url);
-      const sql = postgres(url, { max: 5, idle_timeout: 20, connect_timeout: 15, prepare: !pooled });
+      // Opening a connection (TLS + auth, ~2s to a distant region) costs far more than a query,
+      // so idle connections are kept for a few minutes instead of being reopened per request.
+      const sql = postgres(url, { max: 5, idle_timeout: 300, connect_timeout: 15, prepare: !pooled });
       g.__gitfillDb = { db: drizzle(sql, { schema }), close: () => sql.end({ timeout: 5 }) };
     }
   }

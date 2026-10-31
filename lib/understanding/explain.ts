@@ -2,12 +2,13 @@ import type { ChatCompletionMessageParam, MuseClient } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
 import { EXPLAIN_PROMPT } from "@/lib/ai/prompts";
 import type { RunRecorder } from "@/lib/agent/recorder";
-import { createRepositoryContext, createRepositoryTools, describeSnapshot, pruneUnknownRefs, type RepositoryContext } from "@/lib/agent/repo-tools";
-import { defineTool, runToolLoop } from "@/lib/agent/tool-loop";
+import { createRepositoryContext, createRepositoryTools, describeSnapshot, splitForContext, type RepositoryContext } from "@/lib/agent/repo-tools";
+import { runToolLoop } from "@/lib/agent/tool-loop";
 import type { SourceFile, SourceSnapshot } from "@/lib/connectors/types";
+import { parseAnswer, replaceCitations, verifyCitations, type ParsedAnswer } from "@/lib/evidence/citations";
 import { normalizePath, type Claim } from "@/lib/evidence/evidence";
-import { diagramBlock, diagramMermaid, footer, footnotes, location, makeRenderContext } from "./render";
-import { explanationSpecSchema, type AskRequest, type ExplanationSpec } from "./schemas";
+import { cite, diagramBlock, diagramMermaid, footer, footnotes, location, makeRenderContext } from "./render";
+import type { AskRequest, ExplanationSpec } from "./schemas";
 
 export interface ExplanationResult {
   spec: ExplanationSpec;
@@ -22,6 +23,8 @@ export interface ExplanationResult {
 
 /** Smaller inline budget than batch jobs: questions are interactive. */
 const INLINE_BUDGET = 160_000;
+const MAX_CITATIONS = 40;
+const MAX_SOURCES = 10;
 
 /**
  * Code Q&A: Muse Spark locates the relevant code through the shared tools, records
@@ -37,22 +40,17 @@ export async function explainCode(opts: {
   /** Pre-built context to reuse across questions on the same snapshot. */
   context?: RepositoryContext;
 }): Promise<ExplanationResult> {
+  const contextStep = await opts.recorder.start("step", "build_context", { files: opts.snapshot.files.length, reused: Boolean(opts.context) });
   const base = opts.context ?? createRepositoryContext(opts.snapshot, { refPrefix: "C", maxClaims: 40 });
-  const retrieved = await retrieveForQuestion(base, opts.request, opts.recorder);
+  await contextStep.succeed({ declarations: base.graph.symbols.length, imports: base.graph.imports.length, routes: base.routes.length });
+  // When every file is already inline, ranking cannot change what the model sees.
+  const fitsInline = splitForContext(opts.snapshot.files, INLINE_BUDGET).deferred.length === 0;
+  const retrieved = fitsInline ? { ranked: null, passages: null } : await retrieveForQuestion(base, opts.request, opts.recorder);
   const snapshot = retrieved.ranked ? rankByRetrieval(opts.snapshot, retrieved.ranked, opts.request) : rankForQuestion(opts.snapshot, opts.request);
   // Same graph, claims and retriever; only the inline file order changes.
   const context: RepositoryContext = { ...base, snapshot };
-  const claimsBefore = context.claims.length;
-  const tools = [
-    ...createRepositoryTools(context),
-    defineTool({
-      name: "finish_explanation",
-      description: "Submit the final answer. Cite only refs returned by record_claims. Include a diagram only when it helps.",
-      input: explanationSpecSchema,
-      terminal: true,
-      run: async () => ({ accepted: true }),
-    }),
-  ];
+  // No claim-recording tool: the answer cites `path:lines` inline and code verifies them afterwards.
+  const tools = createRepositoryTools(context, { claims: false });
   const described = describeSnapshot(context, { inlineBudgetChars: INLINE_BUDGET });
   const diagramLine =
     opts.request.diagram === "none"
@@ -71,7 +69,13 @@ export async function explainCode(opts: {
     .filter(Boolean)
     .join("\n");
 
-  const { result, turns, toolCalls } = await runToolLoop<ExplanationSpec>({
+  const loopStep = await opts.recorder.start("step", "agent_loop", {
+    promptChars: user.length,
+    inlineFiles: described.inlineCount,
+    deferredFiles: described.deferredCount,
+    historyMessages: opts.history?.length ?? 0,
+  });
+  const { result: answer, turns, toolCalls } = await runToolLoop<string>({
     client: opts.client,
     model: modelFor("explainer"),
     purpose: "explain_code",
@@ -82,13 +86,45 @@ export async function explainCode(opts: {
     maxTurns: 8,
     maxToolCalls: 24,
     maxTokens: 8_000,
+    // Default effort spends ~2-3k hidden tokens per answer; low keeps quality with roughly half the latency.
+    reasoningEffort: "low",
+    finishOnText: true,
+    streamText: true,
   });
 
-  const known = new Set(context.claims.map((c) => c.ref));
-  const spec = validateReferences(pruneUnknownRefs(result, known).value, context);
-  const claims = context.claims.slice(claimsBefore);
-  const markdown = renderExplanation(spec, snapshot, claims);
+  await loopStep.succeed({ turns, toolCalls });
+
+  const renderStep = await opts.recorder.start("step", "verify_and_render");
+  const parsed = parseAnswer(answer);
+  const { claims, refs } = verifyCitations(parsed.body, context.files, { refPrefix: context.refPrefix, firstIndex: context.claims.length + 1, max: MAX_CITATIONS });
+  context.claims.push(...claims);
+  const spec = validateReferences(toSpec(parsed, claims, opts.request), context);
+  const markdown = renderExplanation(spec, snapshot, claims, refs);
+  await renderStep.succeed({
+    citations: refs.length,
+    claims: claims.length,
+    verified: claims.filter((c) => c.status === "verified").length,
+    inferred: claims.filter((c) => c.status === "inferred").length,
+    diagram: parsed.diagram ? "ok" : parsed.diagramError ? `dropped: ${parsed.diagramError}` : "none",
+    markdownChars: markdown.length,
+  });
   return { spec, markdown, mermaid: diagramMermaid(spec.diagram), claims, agent: { turns, toolCalls }, retrieval: retrieved.ranked ? "memora" : "heuristic" };
+}
+
+/** Builds the stored spec from the parsed Markdown answer and its verified citations. */
+function toSpec(parsed: ParsedAnswer, claims: Claim[], request: AskRequest): ExplanationSpec {
+  // Sources list: first cited range per file, in order of appearance.
+  const byFile = new Map<string, Claim>();
+  for (const c of claims) if (c.filePath && c.startLine !== null && !byFile.has(c.filePath)) byFile.set(c.filePath, c);
+  return {
+    title: (parsed.title ?? request.question).replace(/\s+/g, " ").slice(0, 120),
+    answer: parsed.body,
+    claimRefs: claims.map((c) => c.ref),
+    references: [...byFile.values()].slice(0, MAX_SOURCES).map((c) => ({ path: c.filePath!, startLine: c.startLine!, endLine: c.endLine ?? c.startLine!, why: c.claim.slice(0, 200) })),
+    diagram: parsed.diagram,
+    unverified: parsed.unverified.slice(0, 8),
+    followUps: parsed.followUps.slice(0, 4),
+  };
 }
 
 /** Asks Memora for the passages most relevant to the question; falls back silently when it is not available. */
@@ -150,10 +186,11 @@ function validateReferences(spec: ExplanationSpec, context: RepositoryContext): 
   return { ...spec, references };
 }
 
-export function renderExplanation(spec: ExplanationSpec, snapshot: SourceSnapshot, claims: Claim[]): string {
+/** `citationRefs` maps each inline `path:lines` citation in the answer to its claim (see verifyCitations). */
+export function renderExplanation(spec: ExplanationSpec, snapshot: SourceSnapshot, claims: Claim[], citationRefs: Array<string | null>): string {
   const ctx = makeRenderContext([{ snapshot, claims }]);
-  for (const r of spec.claimRefs) if (ctx.claims.has(r)) ctx.used.add(r);
-  const out: string[] = [`### ${spec.title}`, "", spec.answer.trim(), ""];
+  const answer = replaceCitations(spec.answer.trim(), citationRefs, (ref, citation) => `${location(citation, ctx)}${cite([ref], ctx)}`);
+  const out: string[] = [`### ${spec.title}`, "", answer, ""];
   const diagram = diagramBlock(spec.diagram, ctx);
   if (diagram) out.push(diagram, "");
   if (spec.references.length) {

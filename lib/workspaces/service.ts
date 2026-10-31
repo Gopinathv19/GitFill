@@ -1,9 +1,9 @@
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { githubClientFor } from "@/lib/auth/github-token";
 import { canonicalRepoUrl, parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
-import { artifacts, chatMessages, deckVersions, decks, documents, generationJobs, projects, workspaceRepositories, workspaces } from "@/lib/db/schema";
+import { artifacts, chatMessages, chatSessions, deckVersions, decks, documents, generationJobs, projects, workspaceRepositories, workspaces } from "@/lib/db/schema";
 import { NotFoundError } from "@/lib/http";
 
 export const createWorkspaceSchema = z.object({
@@ -34,19 +34,22 @@ export async function listWorkspaces(db: Database, userId: string) {
   const rows = await db.select().from(workspaces).where(eq(workspaces.ownerId, userId)).orderBy(desc(workspaces.updatedAt));
   if (!rows.length) return [];
   const ids = rows.map((w) => w.id);
-  const repos = await db.select().from(workspaceRepositories).where(inArray(workspaceRepositories.workspaceId, ids)).orderBy(asc(workspaceRepositories.createdAt));
-  const deckCounts = await db
-    .select({ workspaceId: projects.workspaceId, n: count(decks.id) })
-    .from(decks)
-    .innerJoin(projects, eq(decks.projectId, projects.id))
-    .where(inArray(projects.workspaceId, ids))
-    .groupBy(projects.workspaceId);
-  const docCounts = await db
-    .select({ workspaceId: projects.workspaceId, n: count(documents.id) })
-    .from(documents)
-    .innerJoin(projects, eq(documents.projectId, projects.id))
-    .where(inArray(projects.workspaceId, ids))
-    .groupBy(projects.workspaceId);
+  // Independent reads run concurrently: each round trip to the database is the dominant cost.
+  const [repos, deckCounts, docCounts] = await Promise.all([
+    db.select().from(workspaceRepositories).where(inArray(workspaceRepositories.workspaceId, ids)).orderBy(asc(workspaceRepositories.createdAt)),
+    db
+      .select({ workspaceId: projects.workspaceId, n: count(decks.id) })
+      .from(decks)
+      .innerJoin(projects, eq(decks.projectId, projects.id))
+      .where(inArray(projects.workspaceId, ids))
+      .groupBy(projects.workspaceId),
+    db
+      .select({ workspaceId: projects.workspaceId, n: count(documents.id) })
+      .from(documents)
+      .innerJoin(projects, eq(documents.projectId, projects.id))
+      .where(inArray(projects.workspaceId, ids))
+      .groupBy(projects.workspaceId),
+  ]);
   return rows.map((w) => ({
     id: w.id,
     name: w.name,
@@ -75,27 +78,29 @@ export async function assertWorkspace(db: Database, userId: string, workspaceId:
 
 export async function getWorkspace(db: Database, userId: string, workspaceId: string) {
   const ws = await assertWorkspace(db, userId, workspaceId);
-  const repos = await db.select().from(workspaceRepositories).where(eq(workspaceRepositories.workspaceId, ws.id)).orderBy(asc(workspaceRepositories.createdAt));
-  const deckRows = await db
-    .select({ id: decks.id, title: decks.title, latestVersion: decks.latestVersion, updatedAt: decks.updatedAt, repositoryId: projects.repositoryId })
-    .from(decks)
-    .innerJoin(projects, eq(decks.projectId, projects.id))
-    .where(eq(projects.workspaceId, ws.id))
-    .orderBy(desc(decks.updatedAt));
-  const jobs = await db
-    .select({ id: generationJobs.id, kind: generationJobs.kind, status: generationJobs.status, prompt: generationJobs.userPrompt, deckId: generationJobs.deckId, documentId: generationJobs.documentId, createdAt: generationJobs.createdAt })
-    .from(generationJobs)
-    .innerJoin(projects, eq(generationJobs.projectId, projects.id))
-    .where(eq(projects.workspaceId, ws.id))
-    .orderBy(desc(generationJobs.createdAt))
-    .limit(10);
-  const docRows = await db
-    .select({ id: documents.id, kind: documents.kind, title: documents.title, createdAt: documents.createdAt, repositoryId: projects.repositoryId, metadata: documents.metadata })
-    .from(documents)
-    .innerJoin(projects, eq(documents.projectId, projects.id))
-    .where(eq(projects.workspaceId, ws.id))
-    .orderBy(desc(documents.createdAt))
-    .limit(50);
+  const [repos, deckRows, jobs, docRows] = await Promise.all([
+    db.select().from(workspaceRepositories).where(eq(workspaceRepositories.workspaceId, ws.id)).orderBy(asc(workspaceRepositories.createdAt)),
+    db
+      .select({ id: decks.id, title: decks.title, latestVersion: decks.latestVersion, updatedAt: decks.updatedAt, repositoryId: projects.repositoryId })
+      .from(decks)
+      .innerJoin(projects, eq(decks.projectId, projects.id))
+      .where(eq(projects.workspaceId, ws.id))
+      .orderBy(desc(decks.updatedAt)),
+    db
+      .select({ id: generationJobs.id, kind: generationJobs.kind, status: generationJobs.status, prompt: generationJobs.userPrompt, deckId: generationJobs.deckId, documentId: generationJobs.documentId, createdAt: generationJobs.createdAt })
+      .from(generationJobs)
+      .innerJoin(projects, eq(generationJobs.projectId, projects.id))
+      .where(eq(projects.workspaceId, ws.id))
+      .orderBy(desc(generationJobs.createdAt))
+      .limit(10),
+    db
+      .select({ id: documents.id, kind: documents.kind, title: documents.title, createdAt: documents.createdAt, repositoryId: projects.repositoryId, metadata: documents.metadata })
+      .from(documents)
+      .innerJoin(projects, eq(documents.projectId, projects.id))
+      .where(eq(projects.workspaceId, ws.id))
+      .orderBy(desc(documents.createdAt))
+      .limit(50),
+  ]);
   const thumbs = deckRows.length ? await firstSlidePreviews(db, deckRows.map((d) => d.id)) : new Map<string, string>();
   return {
     id: ws.id,
@@ -222,15 +227,85 @@ export async function assertArtifactAccess(db: Database, userId: string, artifac
   return row.artifact;
 }
 
-// ─── Chat history ─────────────────────────────────────────────────────────────
+// ─── Chat sessions ────────────────────────────────────────────────────────────
 
-export async function listMessages(db: Database, workspaceId: string, limit = 100) {
-  const rows = await db.select().from(chatMessages).where(eq(chatMessages.workspaceId, workspaceId)).orderBy(desc(chatMessages.createdAt)).limit(limit);
+const DEFAULT_SESSION_TITLE = "New session";
+
+function sessionView(s: typeof chatSessions.$inferSelect, workspaceName: string) {
+  return { id: s.id, workspaceId: s.workspaceId, workspaceName, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt };
+}
+
+/** The user's sessions across workspaces (or in one workspace), most recently active first. */
+export async function listSessions(db: Database, userId: string, opts: { workspaceId?: string; limit?: number } = {}) {
+  const rows = await db
+    .select({ session: chatSessions, workspaceName: workspaces.name })
+    .from(chatSessions)
+    .innerJoin(workspaces, eq(chatSessions.workspaceId, workspaces.id))
+    .where(and(eq(workspaces.ownerId, userId), opts.workspaceId ? eq(chatSessions.workspaceId, opts.workspaceId) : undefined))
+    .orderBy(desc(chatSessions.updatedAt))
+    .limit(opts.limit ?? 200);
+  return rows.map((r) => sessionView(r.session, r.workspaceName));
+}
+
+export async function createSession(db: Database, userId: string, workspaceId: string, title?: string) {
+  const ws = await assertWorkspace(db, userId, workspaceId);
+  const [row] = await db.insert(chatSessions).values({ workspaceId, title: sessionTitle(title) }).returning();
+  return sessionView(row!, ws.name);
+}
+
+export async function assertSession(db: Database, userId: string, sessionId: string) {
+  const row = (
+    await db
+      .select({ session: chatSessions, workspaceName: workspaces.name })
+      .from(chatSessions)
+      .innerJoin(workspaces, eq(chatSessions.workspaceId, workspaces.id))
+      .where(and(eq(chatSessions.id, sessionId), eq(workspaces.ownerId, userId)))
+  )[0];
+  if (!row) throw new NotFoundError("Session not found.");
+  return sessionView(row.session, row.workspaceName);
+}
+
+export async function renameSession(db: Database, userId: string, sessionId: string, title: string) {
+  const session = await assertSession(db, userId, sessionId);
+  const [row] = await db.update(chatSessions).set({ title: sessionTitle(title) }).where(eq(chatSessions.id, sessionId)).returning();
+  return sessionView(row!, session.workspaceName);
+}
+
+export async function deleteSession(db: Database, userId: string, sessionId: string) {
+  await assertSession(db, userId, sessionId);
+  await db.delete(chatSessions).where(eq(chatSessions.id, sessionId));
+}
+
+export async function listMessages(db: Database, sessionId: string, limit = 100) {
+  const rows = await db.select().from(chatMessages).where(eq(chatMessages.sessionId, sessionId)).orderBy(desc(chatMessages.createdAt)).limit(limit);
   return rows.reverse().map((m) => ({ id: m.id, role: m.role, content: m.content, jobIds: m.jobIds as string[], createdAt: m.createdAt }));
 }
 
-export async function addMessage(db: Database, workspaceId: string, role: "user" | "assistant", content: string, jobIds: string[] = []) {
-  const [m] = await db.insert(chatMessages).values({ workspaceId, role, content, jobIds }).returning();
-  await db.update(workspaces).set({ updatedAt: new Date() }).where(eq(workspaces.id, workspaceId));
+/**
+ * Appends a message to a session. Without a session (actions started from dialogs), it goes to the
+ * workspace's most recently active session, or a new one titled after the message.
+ * A session still named "New session" takes its title from its first user message.
+ */
+export async function addMessage(db: Database, workspaceId: string, role: "user" | "assistant", content: string, jobIds: string[] = [], sessionId?: string) {
+  const target = sessionId ?? (await latestSessionId(db, workspaceId)) ?? (await db.insert(chatSessions).values({ workspaceId, title: sessionTitle(content) }).returning())[0]!.id;
+  const now = new Date();
+  const [[m]] = await Promise.all([
+    db.insert(chatMessages).values({ workspaceId, sessionId: target, role, content, jobIds }).returning(),
+    db
+      .update(chatSessions)
+      .set({ updatedAt: now, ...(role === "user" ? { title: sql`CASE WHEN ${chatSessions.title} = ${DEFAULT_SESSION_TITLE} THEN ${sessionTitle(content)} ELSE ${chatSessions.title} END` } : {}) })
+      .where(eq(chatSessions.id, target)),
+    db.update(workspaces).set({ updatedAt: now }).where(eq(workspaces.id, workspaceId)),
+  ]);
   return { id: m!.id, role: m!.role, content: m!.content, jobIds: m!.jobIds as string[], createdAt: m!.createdAt };
+}
+
+async function latestSessionId(db: Database, workspaceId: string): Promise<string | undefined> {
+  return (await db.select({ id: chatSessions.id }).from(chatSessions).where(eq(chatSessions.workspaceId, workspaceId)).orderBy(desc(chatSessions.updatedAt)).limit(1))[0]?.id;
+}
+
+function sessionTitle(text?: string): string {
+  const line = text?.replace(/\s+/g, " ").trim() ?? "";
+  if (!line) return DEFAULT_SESSION_TITLE;
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
 }

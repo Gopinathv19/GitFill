@@ -1,3 +1,4 @@
+import type { RunRecorder } from "@/lib/agent/recorder";
 import type { SourceFile, SourceSnapshot } from "../types";
 import { GitHubClient } from "./client";
 import { DEFAULT_LIMITS, languageStats, selectFiles, type SelectionLimits } from "./filter";
@@ -10,6 +11,8 @@ export interface IngestOptions {
   limits?: SelectionLimits;
   client?: GitHubClient;
   concurrency?: number;
+  /** Receives timed steps for the metadata/tree lookups and the file downloads. */
+  recorder?: RunRecorder;
 }
 
 /**
@@ -25,14 +28,17 @@ export async function ingestGitHubRepository(opts: IngestOptions): Promise<Sourc
   const client = opts.client ?? new GitHubClient();
   const limits = opts.limits ?? DEFAULT_LIMITS;
 
+  const treeStep = await opts.recorder?.start("step", "github_tree", { repo: `${ref.owner}/${ref.repo}` });
   const repo = await client.getRepo(ref.owner, ref.repo);
   const branch = branchOverride ?? ref.branch ?? repo.defaultBranch;
   const commit = await client.getCommit(ref.owner, ref.repo, branch);
   const tree = await client.getTree(ref.owner, ref.repo, commit.sha);
   const { selected, inventory, totalBytes } = selectFiles(tree.entries, limits);
+  await treeStep?.succeed({ entries: tree.entries.length, selected: selected.length, requests: 3 });
 
   const files: SourceFile[] = [];
   const failed = new Map<string, string>();
+  const filesStep = await opts.recorder?.start("step", "github_files", { files: selected.length, concurrency: opts.concurrency ?? 8 });
   await mapPool(selected, opts.concurrency ?? 8, async (s) => {
     try {
       const content = await client.getFileText(ref.owner, ref.repo, commit.sha, s.path, limits.maxFileBytes);
@@ -45,6 +51,8 @@ export async function ingestGitHubRepository(opts: IngestOptions): Promise<Sourc
       failed.set(s.path, err instanceof Error ? err.message : "fetch_failed");
     }
   });
+
+  await filesStep?.succeed({ fetched: files.length, failed: failed.size, bytes: totalBytes });
 
   const order = new Map(selected.map((s, i) => [s.path, i]));
   files.sort((a, b) => order.get(a.path)! - order.get(b.path)!);

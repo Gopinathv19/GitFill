@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { ChatCompletionMessageParam, ChatCompletionTool, MuseClient } from "@/lib/ai/client";
+import type { ChatCompletionMessageParam, ChatCompletionTool, MuseClient, ReasoningEffort } from "@/lib/ai/client";
 import { toModelJsonSchema } from "@/lib/ai/json-schema";
 import { summarize, type RunRecorder } from "./recorder";
 
@@ -9,8 +9,11 @@ export interface ToolDefinition<S extends z.ZodType = z.ZodType> {
   input: S;
   /** Executes in application code. Returned value is serialized back to the model. */
   run(input: z.infer<S>): Promise<unknown>;
-  /** A terminal tool ends the loop; its validated input becomes the loop result. */
-  terminal?: boolean;
+  /**
+   * A terminal tool ends the loop; its validated input becomes the loop result. A function
+   * decides per call from the tool's result (e.g. end only when the tool succeeded).
+   */
+  terminal?: boolean | ((result: unknown) => boolean);
 }
 
 export function defineTool<S extends z.ZodType>(def: ToolDefinition<S>): ToolDefinition<S> {
@@ -28,6 +31,11 @@ export interface ToolLoopOptions {
   maxTurns?: number;
   maxToolCalls?: number;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
+  /** End the loop when the model replies with text and no tool calls; that text becomes the result. */
+  finishOnText?: boolean;
+  /** Stream the model's text to `recorder.live` as it is written (used for answers shown live). */
+  streamText?: boolean;
 }
 
 export interface ToolLoopResult<T> {
@@ -41,6 +49,8 @@ export class ToolLoopError extends Error {
 }
 
 const MAX_TOOL_RESULT_CHARS = 24_000;
+/** Shorter text replies are treated as the model thinking aloud, not as a final answer. */
+const MIN_FINAL_TEXT_CHARS = 40;
 
 /**
  * Bounded agent loop: the model proposes tool calls, application code validates and
@@ -54,26 +64,48 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
     type: "function",
     function: { name: t.name, description: t.description, parameters: toModelJsonSchema(t.input) },
   }));
-  const terminalNames = opts.tools.filter((t) => t.terminal).map((t) => t.name);
+  const terminalNames = opts.tools.filter((t) => t.terminal === true).map((t) => t.name);
+  const finish = [opts.finishOnText ? "reply with your final answer" : "", terminalNames.length ? `call ${terminalNames.join(" or ")}` : ""].filter(Boolean).join(" or ");
   const messages: ChatCompletionMessageParam[] = [{ role: "system", content: opts.system }, ...opts.messages];
   let toolCalls = 0;
   let nudges = 0;
 
+  // On the last turn only finishing is possible, so a long exploration ends with what it found
+  // instead of failing the whole job.
+  const finalTools = terminalNames.length ? tools.filter((t) => t.type === "function" && terminalNames.includes(t.function.name)) : tools;
+
   for (let turn = 1; turn <= maxTurns; turn++) {
-    const res = await opts.client.chat({ model: opts.model, messages, tools, purpose: `${opts.purpose}:turn${turn}`, maxTokens: opts.maxTokens });
+    const lastTurn = turn === maxTurns && maxTurns > 1;
+    if (lastTurn) messages.push({ role: "user", content: `This is your last turn. Do not research further: ${finish} now with what you have, noting anything left unclear.` });
+    const request = { model: opts.model, messages, tools: lastTurn ? finalTools : tools, purpose: `${opts.purpose}:turn${turn}`, maxTokens: opts.maxTokens, reasoningEffort: opts.reasoningEffort };
+    const live = opts.streamText ? opts.recorder.live : undefined;
+    let streamed = false;
+    // The model's reasoning is hidden, so a turn can be silent for many seconds: show it as a step.
+    const thinking = { type: "activity" as const, id: `${opts.purpose}-turn${turn}`, kind: "step" as const, name: "thinking" };
+    const thinkingStarted = Date.now();
+    live?.({ ...thinking, status: "started" });
+    const res = live
+      ? await opts.client.chatStream(request, (delta) => {
+          streamed = true;
+          live({ type: "text", delta });
+        })
+      : await opts.client.chat(request);
+    live?.({ ...thinking, status: "succeeded", durationMs: Date.now() - thinkingStarted });
     await opts.recorder.addUsage(res.usage.inputTokens, res.usage.outputTokens);
     const calls = (res.message.tool_calls ?? []).filter((c) => c.type === "function");
 
     if (calls.length === 0) {
-      if (nudges >= 2) throw new ToolLoopError(`Agent stopped without calling ${terminalNames.join(" or ")}.`);
+      const text = res.message.content?.trim() ?? "";
+      if (opts.finishOnText && text.length >= MIN_FINAL_TEXT_CHARS) return { result: text as T, turns: turn, toolCalls };
+      if (nudges >= 2) throw new ToolLoopError(`Agent stopped without a final answer (expected: ${finish}).`);
       nudges++;
-      messages.push(
-        { role: "assistant", content: res.message.content ?? "" },
-        { role: "user", content: `Continue using the tools. When done, call ${terminalNames.join(" or ")}.` },
-      );
+      if (streamed) live?.({ type: "text_reset" });
+      messages.push({ role: "assistant", content: res.message.content ?? "" }, { role: "user", content: `Continue using the tools. When done, ${finish}.` });
       continue;
     }
 
+    // Text before tool calls was thinking aloud, not the answer: clear it from the live view.
+    if (streamed) live?.({ type: "text_reset" });
     messages.push({ role: "assistant", content: res.message.content ?? null, tool_calls: res.message.tool_calls });
     let terminalResult: { value: T } | undefined;
 
@@ -81,13 +113,13 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
       toolCalls++;
       const tool = byName.get(call.function.name);
       const output = await executeCall(tool, call.function.name, call.function.arguments, opts.recorder, toolCalls > maxToolCalls);
-      if (output.ok && tool?.terminal) terminalResult = { value: output.input as T };
+      if (output.ok && (typeof tool?.terminal === "function" ? tool.terminal(output.result) : tool?.terminal)) terminalResult = { value: output.input as T };
       messages.push({ role: "tool", tool_call_id: call.id, content: truncate(JSON.stringify(output.ok ? output.result : { error: output.error })) });
     }
 
     if (terminalResult) return { result: terminalResult.value, turns: turn, toolCalls };
     if (toolCalls > maxToolCalls) {
-      messages.push({ role: "user", content: `Tool budget exhausted. Call ${terminalNames.join(" or ")} now with what you have.` });
+      messages.push({ role: "user", content: `Tool budget exhausted. Now ${finish} with what you have.` });
     }
   }
   throw new ToolLoopError(`Agent did not finish within ${maxTurns} turns.`);

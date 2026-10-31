@@ -55,6 +55,8 @@ export async function generateHandbook(opts: { client: MuseClient; snapshot: Sou
       schemaName: "Handbook",
       correctionAttempts: 2,
       maxTokens: 20_000,
+      // Low effort roughly halves hidden reasoning on Muse Wonder; the evidence is already gathered.
+      reasoningEffort: "low",
       messages: [
         { role: "system", content: HANDBOOK_COMPOSER_PROMPT },
         { role: "user", content: composerInput(context, opts.request, notes) },
@@ -113,6 +115,7 @@ async function explore(client: MuseClient, context: RepositoryContext, request: 
     maxTurns: 14,
     maxToolCalls: 60,
     maxTokens: 12_000,
+    reasoningEffort: "low",
   });
   const known = new Set(context.claims.map((c) => c.ref));
   return { notes: pruneUnknownRefs(result, known).value, turns, toolCalls };

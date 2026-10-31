@@ -106,6 +106,15 @@ export interface WorkspaceDetail {
   jobs: Array<{ id: string; kind: string; status: string; prompt: string; deckId: string | null; documentId: string | null; createdAt: string }>;
 }
 
+export interface ChatSession {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";

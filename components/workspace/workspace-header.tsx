@@ -10,7 +10,7 @@ export function WorkspaceHeader({ id, name, description, actions }: { id: string
   const pathname = usePathname();
   const base = `/workspaces/${id}`;
   const tabs = [
-    { href: base, label: "Chat", icon: MessageSquare },
+    { href: base, label: "Ask", icon: MessageSquare },
     { href: `${base}/repositories`, label: "Repositories", icon: FolderGit2 },
     { href: `${base}/documents`, label: "Documents", icon: BookOpen },
     { href: `${base}/presentations`, label: "Presentations", icon: Presentation },
