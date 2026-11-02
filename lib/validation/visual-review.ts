@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { MuseClient } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
 import { VISUAL_REVIEW_PROMPT } from "@/lib/ai/prompts";
-import type { LaidOutSlide } from "@/lib/presentation/layouts";
-import type { RenderedSlide } from "@/lib/render/renderer";
+import type { Slide } from "@/lib/presentation/spec";
+import type { RenderedSlide } from "@/lib/render/browser";
 import type { RunRecorder } from "@/lib/agent/recorder";
 import type { SlideIssue } from "./checks";
 
@@ -30,7 +30,7 @@ export type VisualReview = z.infer<typeof visualReviewSchema>;
  */
 export async function reviewSlidesVisually(opts: {
   client: MuseClient;
-  slides: LaidOutSlide[];
+  slides: Slide[];
   rendered: RenderedSlide[];
   /** Restrict review to these slide ids (re-review after repair). */
   onlySlideIds?: ReadonlySet<string>;
@@ -41,37 +41,40 @@ export async function reviewSlidesVisually(opts: {
   const scores: Record<string, number> = {};
   const targets = opts.slides
     .map((slide, index) => ({ slide, index, page: opts.rendered[index] }))
-    .filter((t) => t.page && (!opts.onlySlideIds || opts.onlySlideIds.has(t.slide.slideId)));
+    // The contents page is a fixed template generated from the outline: nothing to review.
+    .filter((t) => t.page && t.slide.layout !== "contents" && (!opts.onlySlideIds || opts.onlySlideIds.has(t.slide.id)));
 
   let next = 0;
   const worker = async () => {
     while (next < targets.length) {
       const { slide, index, page } = targets[next++]!;
-      const event = await opts.recorder.start("step", "visual_review", { slide: slide.slideId, layout: slide.layout }, modelFor("reviewer"));
+      const event = await opts.recorder.start("step", "visual_review", { slide: slide.id, layout: slide.layout }, modelFor("reviewer"));
       try {
         const png = await readFile(page!.pngPath);
         const { data, usage } = await opts.client.structured({
           model: modelFor("reviewer"),
-          purpose: `visual_review:${slide.slideId}`,
+          purpose: `visual_review:${slide.id}`,
           schema: visualReviewSchema,
           schemaName: "SlideVisualReview",
-          maxTokens: 1500,
+          // Low effort keeps review fast; hidden reasoning also counts against max_tokens.
+          reasoningEffort: "low",
+          maxTokens: 6000,
           messages: [
             { role: "system", content: VISUAL_REVIEW_PROMPT },
             {
               role: "user",
               content: [
-                { type: "text", text: `Slide ${index + 1} of ${opts.slides.length}. Layout type: ${slide.layout}. Review the rendered image.` },
+                { type: "text", text: `Page ${index + 1} of ${opts.slides.length} (${slide.layout}${slide.layout === "page" ? `, ${slide.arrangement}: ${[...slide.main, ...slide.side].map((b) => b.type).join(", ")}` : ""}). Review the rendered image.` },
                 { type: "image_url", image_url: { url: `data:image/png;base64,${png.toString("base64")}` } },
               ],
             },
           ],
         });
         await opts.recorder.addUsage(usage.inputTokens, usage.outputTokens);
-        scores[slide.slideId] = data.score;
+        scores[slide.id] = data.score;
         for (const i of data.issues) {
           issues.push({
-            slideId: slide.slideId,
+            slideId: slide.id,
             slideIndex: index,
             source: "visual_review",
             code: `visual_${i.category}`,
@@ -86,6 +89,6 @@ export async function reviewSlidesVisually(opts: {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 4, targets.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 8, targets.length) }, worker));
   return { issues, scores };
 }

@@ -8,8 +8,6 @@ import { modelFor } from "@/lib/ai/models";
 import { env, requireEnv } from "@/lib/config/env";
 import { MemoryRecorder } from "@/lib/agent/recorder";
 import { defineTool, runToolLoop } from "@/lib/agent/tool-loop";
-import { layoutDeck } from "@/lib/presentation/layouts";
-import { getTheme } from "@/lib/presentation/themes";
 import { reviewSlidesVisually } from "@/lib/validation/visual-review";
 import { sampleDeck } from "@/tests/fixtures/sample-deck";
 
@@ -73,9 +71,10 @@ async function main() {
     const dir = path.resolve("storage/sample/midnight");
     const pngs = (await readdir(dir)).filter((f) => /^slide-\d+\.png$/.test(f)).sort();
     if (!pngs.length) throw new Error("no rendered sample; run `npx tsx scripts/render-sample.ts` first");
-    const laid = layoutDeck(sampleDeck, getTheme("midnight"), "check").slice(3, 5);
-    const rendered = [3, 4].map((i, j) => ({ index: j, pngPath: path.join(dir, pngs[i]!), words: [] }));
-    const r = await reviewSlidesVisually({ client, slides: laid, rendered, recorder: new MemoryRecorder() });
+    const slides = sampleDeck.slides.slice(3, 5);
+    const measure = { overflow: [], fill: 1, diagramFontPx: null, clipped: [], hasDiagram: false };
+    const rendered = [3, 4].map((i, j) => ({ index: j, slideId: slides[j]!.id, pngPath: path.join(dir, pngs[i]!), measure }));
+    const r = await reviewSlidesVisually({ client, slides, rendered, recorder: new MemoryRecorder() });
     if (!Object.keys(r.scores).length) throw new Error("no scores returned");
     return `scores ${JSON.stringify(r.scores)}, ${r.issues.length} issue(s)`;
   });

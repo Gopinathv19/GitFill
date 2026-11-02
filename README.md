@@ -15,7 +15,7 @@ GitFill is a web app (GitHub repositories) and a VS Code extension (local code, 
 | **Commit-to-commit analysis** — any two commits, branches or tags | Web, VS Code (local refs) | Change summary, before/after structure, measured structural diff (moved/added/removed declarations, module dependencies, packages, routes, directories), impact on dependents, interfaces, tests and risks; hypotheses labelled as such |
 | **Architecture reuse** — "make repo B follow repo A's service/repository layering but keep B's models" | Web | Implementation brief: patterns with reference files, target state, comparison table, file-by-file plan, dependencies, constraints, do-not-modify list, acceptance criteria, tests. Exportable as Markdown or JSON for a coding agent |
 | **Documentation** | VS Code, Web | Doc comments with a diff preview (Apply/Reject), README drift detection with one-click fixes, README generation |
-| **Presentations** | Web | Editable `.pptx` + PDF, rendered, checked and repaired automatically |
+| **Presentations** | Web | Handbook-style 16:9 decks (cards, tables, callouts, architecture/flow/sequence/state diagrams) as `.pptx` + PDF, rendered, measured, reviewed and repaired automatically |
 
 ## How it works
 
@@ -44,7 +44,8 @@ flowchart LR
 | Role | Model | Used for |
 | --- | --- | --- |
 | analyst, explainer, differ | `muse-spark-1.3` | Tool loops: exploration, questions, commit interpretation |
-| architect, planner | `muse-wonder-1.0` | Composing handbooks and briefs; planning decks |
+| architect, planner | `muse-wonder-1.0` | Composing handbooks and briefs; deck outlines |
+| composer | `muse-spark-1.3` | Composing each deck page from the outline, in parallel |
 | writer, reviewer, repairer | `muse-spark-1.3` | README, doc comments, drift checks; slide review and repair |
 | illustrator | `muse-image-1.0` | Deck artwork |
 
@@ -52,7 +53,7 @@ flowchart LR
 
 ## Setup
 
-Requirements: Node.js 22, a Postgres database (Neon recommended) **or nothing** (embedded PGlite), and for presentations only: LibreOffice and poppler-utils.
+Requirements: Node.js 22, a Postgres database (Neon recommended) **or nothing** (embedded PGlite), and for presentations only: Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
 
 ```bash
 npm install
@@ -98,7 +99,7 @@ Run **GitFill: Sign in**, paste the server URL and token. See [extension/README.
 | `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | for GitHub sign-in | OAuth app with callback `<APP_BASE_URL>/api/auth/github/callback` |
 | `APP_BASE_URL` | no | Public URL of the app (shown to the extension) |
 | `ARTIFACT_STORAGE_PATH` | no | Where generated files are stored (default `./storage`) |
-| `SOFFICE_PATH` | no | LibreOffice binary (default `soffice`) |
+| `CHROMIUM_PATH` | no | Chromium used to render slides (default: the one `npx playwright-core install chromium` downloads) |
 
 ## Scripts
 

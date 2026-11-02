@@ -61,7 +61,7 @@ export function GenerateDialog({ workspaceId, repo, trigger, onStarted }: { work
           </div>
           <div className="sm:col-span-1">
             <Label htmlFor="g-n">Slides</Label>
-            <Input id="g-n" name="slideCount" type="number" min={4} max={16} defaultValue={8} />
+            <Input id="g-n" name="slideCount" type="number" min={4} max={16} defaultValue={10} />
           </div>
           <div className="sm:col-span-2">
             <Label htmlFor="g-theme">Theme</Label>

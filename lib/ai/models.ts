@@ -5,8 +5,10 @@ import { env } from "@/lib/config/env";
  * the whole output; the fast model wherever a step runs in a loop.
  */
 export type ModelRole =
-  /** Deck planning and interpreting revision requests: few calls, highest stakes. */
+  /** Deck outline and interpreting revision requests: few calls, highest stakes. */
   | "planner"
+  /** Composing each deck page from the outline (runs once per slide, in parallel). */
+  | "composer"
   /** Repository exploration and claim extraction: many tool-loop calls. */
   | "analyst"
   /** Visual review of rendered slide images. */
@@ -26,6 +28,7 @@ export type ModelRole =
 
 const STANDARD: Record<ModelRole, string> = {
   planner: "muse-wonder-1.0",
+  composer: "muse-spark-1.3",
   analyst: "muse-spark-1.3",
   reviewer: "muse-spark-1.3",
   repairer: "muse-spark-1.3",
@@ -37,7 +40,7 @@ const STANDARD: Record<ModelRole, string> = {
 };
 
 /** Roles allowed to drop to the contributor tier in development (never planner: it has no Wonder contributor tier). */
-const CONTRIBUTOR_ELIGIBLE: ReadonlySet<ModelRole> = new Set(["analyst", "reviewer", "repairer", "writer", "explainer", "differ"]);
+const CONTRIBUTOR_ELIGIBLE: ReadonlySet<ModelRole> = new Set(["analyst", "composer", "reviewer", "repairer", "writer", "explainer", "differ"]);
 
 export function modelFor(role: ModelRole): string {
   if (env().MUSE_USE_CONTRIBUTOR === "true" && CONTRIBUTOR_ELIGIBLE.has(role)) {

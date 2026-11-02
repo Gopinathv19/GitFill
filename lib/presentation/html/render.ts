@@ -1,0 +1,175 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import type { DeckSpec, PageSlide, Slide } from "../spec";
+import { getTheme, themeCss } from "../themes";
+import { inline, renderBlock, renderCoverVisual, type FigureCounter } from "./components";
+import { esc } from "./diagrams";
+
+/**
+ * Turns a deck spec into one self-contained HTML document of fixed 16:9 pages: fonts are
+ * embedded, the stylesheet is inlined, images are data URIs. The same document is the
+ * preview, the PDF and the source of every slide image.
+ */
+
+export const PAGE_W = 1280;
+export const PAGE_H = 720;
+
+export interface RenderContext {
+  /** e.g. "Gopinathv19/memora · main" (page header). */
+  repoLabel: string;
+  /** e.g. "Gopinathv19/memora @ b6357f6" (page footer). */
+  evidence: string;
+  /** Cover facts that are always shown, e.g. [["Repository", "owner/repo"], ["Commit", "abc1234"]]. */
+  coverMeta?: Array<[string, string]>;
+  /** Image data URIs keyed by slide id (cover art). */
+  illustrations?: ReadonlyMap<string, string>;
+}
+
+const ASSET_DIR = path.join(process.cwd(), "lib", "presentation");
+let cachedStatic: string | null = null;
+
+function staticCss(): string {
+  if (cachedStatic) return cachedStatic;
+  const font = (file: string, family: string, weight: number) =>
+    `@font-face{font-family:"${family}";src:url(data:font/woff2;base64,${readFileSync(path.join(ASSET_DIR, "assets", "fonts", file)).toString("base64")}) format("woff2");font-weight:${weight};font-display:block}`;
+  const fonts = [
+    font("Geist-Regular.woff2", "Geist", 400),
+    font("Geist-Medium.woff2", "Geist", 500),
+    font("Geist-SemiBold.woff2", "Geist", 600),
+    font("Geist-Bold.woff2", "Geist", 700),
+    font("GeistMono-Regular.woff2", "Geist Mono", 400),
+    font("GeistMono-Medium.woff2", "Geist Mono", 500),
+  ].join("\n");
+  cachedStatic = `${fonts}\n${readFileSync(path.join(ASSET_DIR, "html", "deck.css"), "utf8")}`;
+  return cachedStatic;
+}
+
+/** Content width of each column, in CSS px, for the page's arrangement. */
+const CONTENT_W = PAGE_W - 2 * 46;
+const GAP = 12;
+function columnWidths(arr: PageSlide["arrangement"]): { main: number; side: number } {
+  const two = CONTENT_W - GAP;
+  switch (arr) {
+    case "split":
+      return { main: (two * 1.45) / 2.45, side: two / 2.45 };
+    case "split_even":
+      return { main: two / 2, side: two / 2 };
+    case "rail":
+      return { main: (two * 1.6) / 2.22, side: (two * 0.62) / 2.22 };
+    case "stack":
+      return { main: CONTENT_W, side: CONTENT_W };
+  }
+}
+
+const GITFILL_MARK = `<svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="115" fill="#0d9488"/><line x1="196" y1="180" x2="196" y2="332" stroke="#fff" stroke-width="30" stroke-linecap="round"/><path d="M 316 220 C 316 300 196 262 196 322" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round"/><circle cx="196" cy="150" r="32" fill="none" stroke="#fff" stroke-width="28"/><circle cx="196" cy="362" r="32" fill="#fff"/><circle cx="316" cy="190" r="32" fill="none" stroke="#fff" stroke-width="28"/></svg>`;
+
+interface Section {
+  n: string;
+  title: string;
+  page: number;
+  pages: Array<{ title: string; page: number }>;
+}
+
+/** Section name without any numbering the author added ("02 · Architecture" → "Architecture"). */
+export const sectionName = (section: string) => section.replace(/^\s*\d+\s*[·.:)\-–—]\s*/, "").trim() || section;
+
+export function sectionsOf(spec: DeckSpec): Section[] {
+  const out: Section[] = [];
+  spec.slides.forEach((s, i) => {
+    if (s.layout !== "page") return;
+    const name = sectionName(s.section);
+    let sec = out.find((x) => x.title.toLowerCase() === name.toLowerCase());
+    if (!sec) {
+      sec = { n: String(out.length + 1).padStart(2, "0"), title: name, page: i + 1, pages: [] };
+      out.push(sec);
+    }
+    sec.pages.push({ title: s.title, page: i + 1 });
+  });
+  return out;
+}
+
+export function projectName(spec: DeckSpec): string {
+  return spec.project?.trim() || spec.title.split(/[:—–-]/)[0]!.trim() || spec.title;
+}
+
+export function renderDeckHtml(spec: DeckSpec, ctx: RenderContext): string {
+  const theme = getTheme(spec.theme);
+  const sections = sectionsOf(spec);
+  const total = spec.slides.length;
+  const name = projectName(spec);
+  const mark = (/[A-Za-z0-9]/.exec(name)?.[0] ?? "G").toUpperCase();
+  const figs: FigureCounter = { n: 0 };
+
+  const head = (s: PageSlide | null) => {
+    const sec = s ? sections.find((x) => x.title.toLowerCase() === sectionName(s.section).toLowerCase()) : null;
+    return `<header class="pg-head"><span class="mark">${esc(mark)}</span><span>${esc(name)}</span>${sec ? `<span>/</span><span class="sec">${sec.n} · ${esc(sec.title)}</span>` : ""}<span class="spacer"></span><span>${esc(ctx.repoLabel)}</span></header>`;
+  };
+  const foot = (i: number) =>
+    `<footer class="pg-foot"><span class="gf">${GITFILL_MARK}</span><span>GitFill · evidence: ${esc(ctx.evidence)}</span><span class="spacer"></span><span class="num">${String(i + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</span></footer>`;
+
+  const renderSlide = (s: Slide, i: number): string => {
+    const attrs = `data-slide="${esc(s.id)}" data-index="${i}"`;
+    if (s.layout === "cover") {
+      const visual = renderCoverVisual(s.visual, ctx.illustrations?.get(s.id));
+      // Fixed facts first; the model's own meta adds only what they do not already say.
+      const fixed = ctx.coverMeta ?? [];
+      const taken = new Set(fixed.map(([k]) => k.toLowerCase()));
+      const meta = [...fixed, ...s.meta.filter((m) => !taken.has(m.label.toLowerCase())).map((m) => [m.label, m.value] as const), ["Generated by", "GitFill"] as const].slice(0, 5);
+      return `<section class="page cover style-atlas" ${attrs}>
+        <div class="cover-top"><span class="mark lg">${esc(mark)}</span>${esc(name)}${s.tag ? `<span class="tag badge accent">${esc(s.tag)}</span>` : ""}</div>
+        <div class="cover-main ${visual ? "" : "no-visual"}" data-body>
+          <div>${s.kicker ? `<div class="kicker">${inline(s.kicker)}</div>` : ""}<h1>${inline(s.title, { accent: true })}</h1><p class="sub">${inline(s.subtitle)}</p></div>
+          ${visual ? `<div>${visual}</div>` : ""}
+        </div>
+        <div class="cover-meta">${meta.map(([k, v]) => `<div>${esc(k)}<b>${inline(v)}</b></div>`).join("")}</div>
+      </section>`;
+    }
+    if (s.layout === "contents") {
+      const toc = `<div class="toc">${sections
+        .map(
+          (sec) => `<div class="toc-sec"><div class="toc-h"><span class="toc-n">${sec.n}</span><span>${esc(sec.title)}</span><span class="toc-p">${sec.page}</span></div>
+          <ul>${sec.pages.map((p) => `<li><span>${esc(p.title)}</span><span>${p.page}</span></li>`).join("")}</ul></div>`,
+        )
+        .join("")}</div>`;
+      return `<section class="page style-atlas" ${attrs}>${head(null)}<div class="pg-title"><div class="kicker">Deck</div><h1>${inline(s.title)}</h1>${s.lede ? `<p class="lede">${inline(s.lede)}</p>` : ""}</div><div class="pg-body" data-body>${toc}</div>${foot(i)}</section>`;
+    }
+
+    const sec = sections.find((x) => x.title.toLowerCase() === sectionName(s.section).toLowerCase())!;
+    const first = sec.page === i + 1;
+    const title = `<div class="pg-title"><div class="kicker">${sec.n} · ${esc(sec.title)}</div><h1>${inline(s.title, { accent: true })}</h1>${s.lede ? `<p class="lede">${inline(s.lede)}</p>` : ""}</div>`;
+    const arrangement = s.side.length ? s.arrangement : "stack";
+    const widths = columnWidths(arrangement);
+    const blocks = (list: PageSlide["main"], which: "main" | "side", width: number) =>
+      list
+        .map((b, bi) => `<div class="blk${b.type === "diagram" ? " fig" : ""}" data-block="${which}.${bi}" data-type="${b.type}">${renderBlock(b, width, figs)}</div>`)
+        .join("");
+    const col = (inner: string, which: "main" | "side") => `<div class="col" data-col="${which}">${inner}</div>`;
+    // A stacked page keeps side blocks: they follow the main ones in the single column.
+    const body =
+      arrangement === "stack"
+        ? col(blocks(s.main, "main", widths.main) + blocks(s.side, "side", widths.main), "main")
+        : arrangement === "rail"
+          ? col(blocks(s.side, "side", widths.side), "side") + col(blocks(s.main, "main", widths.main), "main")
+          : col(blocks(s.main, "main", widths.main), "main") + col(blocks(s.side, "side", widths.side), "side");
+    return `<section class="page style-${s.style}${s.density === "compact" ? " dense" : s.density === "tight" ? " dense tight" : ""}" ${attrs}>${head(s)}
+      ${first ? `<div class="opener"><span class="big-n">${sec.n}</span>${title}</div>` : title}
+      <div class="pg-body arr-${arrangement}" data-body>${body}</div>${foot(i)}</section>`;
+  };
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${esc(spec.title)}</title>
+<style>${staticCss()}
+${themeCss(theme)}
+.blk{display:flex;flex-direction:column;min-width:0;min-height:0}
+.blk.fig{flex:1 1 auto}
+</style>
+</head>
+<body>
+${spec.slides.map(renderSlide).join("\n")}
+</body>
+</html>`;
+}

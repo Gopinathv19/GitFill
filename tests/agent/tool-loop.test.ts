@@ -107,3 +107,30 @@ describe("runToolLoop text streaming", () => {
     ]);
   });
 });
+
+describe("runToolLoop rejected final call", () => {
+  it("gives the model a finish-only turn to fix an invalid terminal call on the last turn", async () => {
+    const out = await runToolLoop<{ message: string }>({
+      client: scripted([
+        { name: "ask", args: { q: "bad" } },
+        { name: "reply", args: {} },
+        { name: "reply", args: { message: "fixed" } },
+      ]),
+      model: "m",
+      purpose: "t",
+      system: "",
+      messages: [],
+      tools,
+      recorder: new MemoryRecorder(),
+      maxTurns: 2,
+    });
+    expect(out).toMatchObject({ turns: 3, result: { message: "fixed" } });
+  });
+
+  it("still fails after the retries are used up", async () => {
+    const bad = { name: "reply", args: {} };
+    await expect(
+      runToolLoop({ client: scripted([{ name: "ask", args: { q: "bad" } }, bad, bad, bad]), model: "m", purpose: "t", system: "", messages: [], tools, recorder: new MemoryRecorder(), maxTurns: 2 }),
+    ).rejects.toThrow("did not finish within 2 turns");
+  });
+});

@@ -9,7 +9,7 @@ import { env } from "@/lib/config/env";
 export interface ArtifactStorage {
   put(key: string, data: Buffer): Promise<{ key: string; sizeBytes: number }>;
   get(key: string): Promise<Buffer>;
-  /** Absolute local path for tools (LibreOffice, PptxGenJS) that need a file on disk. */
+  /** Absolute local path for tools (Chromium, PptxGenJS) that need a file on disk. */
   localPath(key: string): string;
 }
 

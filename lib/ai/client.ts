@@ -142,9 +142,10 @@ export class MuseClient {
     const usage: Usage = { inputTokens: 0, outputTokens: 0 };
     const maxAttempts = 1 + (req.correctionAttempts ?? 1);
     let lastIssues: string[] = [];
+    let maxTokens = req.maxTokens;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const res = await this.call({ ...req, messages, purpose: attempt === 1 ? req.purpose : `${req.purpose}:correction` }, responseFormat);
+      const res = await this.call({ ...req, maxTokens, messages, purpose: attempt === 1 ? req.purpose : `${req.purpose}:correction` }, responseFormat);
       usage.inputTokens += res.usage.inputTokens;
       usage.outputTokens += res.usage.outputTokens;
       const text = res.message.content ?? "";
@@ -153,6 +154,12 @@ export class MuseClient {
       try {
         candidate = JSON.parse(stripFences(text));
       } catch {
+        if (res.finishReason === "length") {
+          // Cut off, not malformed: asking for a correction would be cut off again. Retry with more room.
+          lastIssues = ["Response was cut off at the token limit before the JSON was complete."];
+          maxTokens = Math.min((maxTokens ?? 8000) * 2, 64_000);
+          continue;
+        }
         lastIssues = ["Response was not valid JSON."];
         messages.push({ role: "assistant", content: text }, { role: "user", content: correctionPrompt(lastIssues) });
         continue;

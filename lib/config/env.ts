@@ -14,7 +14,8 @@ const envSchema = z.object({
   GITHUB_TOKEN: z.string().min(1).optional(),
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
   ARTIFACT_STORAGE_PATH: z.string().default("./storage"),
-  SOFFICE_PATH: z.string().default("soffice"),
+  /** Chromium that renders slides. Unset = the browser installed by `npx playwright-core install chromium`. */
+  CHROMIUM_PATH: z.string().optional(),
   /** "stub" enables one-click demo sign-in for local testing; "github" requires a GitHub OAuth app. */
   AUTH_MODE: z.enum(["stub", "github"]).optional(),
   /** HMAC key for session cookies. Required in production. */

@@ -6,7 +6,7 @@ export const generateRequestSchema = z.object({
   branch: z.string().trim().max(200).optional(),
   audience: z.string().trim().min(2).max(120).default("Engineering team"),
   purpose: z.string().trim().max(240).default("Explain the repository's architecture, components, data flow, technology stack and deployment."),
-  slideCount: z.number().int().min(4).max(16).default(8),
+  slideCount: z.number().int().min(4).max(16).default(10),
   theme: z.enum(THEMES).default("midnight"),
   instructions: z.string().trim().max(2000).default(""),
   outputs: z

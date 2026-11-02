@@ -80,10 +80,14 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
   // instead of failing the whole job.
   const finalTools = terminalNames.length ? tools.filter((t) => t.type === "function" && terminalNames.includes(t.function.name)) : tools;
 
-  for (let turn = 1; turn <= maxTurns; turn++) {
+  // A finishing call that fails validation on the last turn gets a few finish-only turns to fix
+  // its arguments; otherwise one bad field in a large result would fail the whole job.
+  const MAX_FINISH_RETRIES = 2;
+  let limit = maxTurns;
+  for (let turn = 1; turn <= limit; turn++) {
     if (opts.trimHistory) trimOldResults(messages, toolMessages, turn, opts.trimHistory);
-    const lastTurn = turn === maxTurns && maxTurns > 1;
-    if (lastTurn) messages.push({ role: "user", content: `This is your last turn. Do not research further: ${finish} now with what you have, noting anything left unclear.` });
+    const lastTurn = turn >= maxTurns && maxTurns > 1;
+    if (turn === maxTurns && maxTurns > 1) messages.push({ role: "user", content: `This is your last turn. Do not research further: ${finish} now with what you have, noting anything left unclear.` });
     const request = { model: opts.model, messages, tools: lastTurn ? finalTools : tools, purpose: `${opts.purpose}:turn${turn}`, maxTokens: opts.maxTokens, reasoningEffort: opts.reasoningEffort };
     const live = opts.streamText ? opts.recorder.live : undefined;
     let streamed = false;
@@ -131,6 +135,12 @@ export async function runToolLoop<T>(opts: ToolLoopOptions): Promise<ToolLoopRes
     });
 
     if (terminalResult) return { result: terminalResult.value, turns: turn, toolCalls };
+    const failedFinish = calls.some((call, i) => terminalNames.includes(call.function.name) && !outputs[i]!.ok);
+    if (lastTurn && failedFinish && limit < maxTurns + MAX_FINISH_RETRIES) {
+      limit++;
+      messages.push({ role: "user", content: `Your ${terminalNames.join("/")} call was rejected. Fix exactly the fields listed in the error and call it again; do not research further.` });
+      continue;
+    }
     if (toolCalls > maxToolCalls) {
       messages.push({ role: "user", content: `Tool budget exhausted. Now ${finish} with what you have.` });
     }

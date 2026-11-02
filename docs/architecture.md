@@ -19,7 +19,7 @@ flowchart LR
   ENG --> CO[Composers: Muse Wonder]
   CO --> RD[Markdown + Mermaid renderers]
   RD --> DOC[(documents)]
-  W --> P[Presentation pipeline: planner, PPTX, render, checks, repair]
+  W --> P[Presentation pipeline: outline, page composer, HTML render, checks, repair, PPTX]
 ```
 
 ## Modules
@@ -33,7 +33,7 @@ flowchart LR
 | `lib/understanding/` | Feature agents and renderers: `schemas.ts` (Zod outputs: handbook, explanation, commit report, implementation brief, doc comments, docs drift), `handbook.ts`, `explain.ts`, `compare.ts`, `reuse.ts`, `docs.ts`, `render.ts` (footnoted evidence, GitHub links at the commit, diagram blocks). |
 | `lib/evidence/` | Claim verification against real file lines. |
 | `lib/jobs/` | Queue (Postgres `SKIP LOCKED`), pipeline dispatch by job kind, document jobs, inline worker, DB recorder and read models. |
-| `lib/presentation/`, `lib/render/`, `lib/validation/`, `lib/documents/` | The presentation pipeline (deck spec, layout, PPTX, LibreOffice render, checks, repair, README and evidence report). |
+| `lib/presentation/`, `lib/render/`, `lib/validation/`, `lib/documents/` | The presentation pipeline: deck spec (pages of typed blocks), HTML/SVG page renderer and themes (`html/`), Chromium render with DOM measurements (`render/browser.ts`), overflow/underfill/diagram-legibility checks, visual review, repair, image-based PPTX, README and evidence report. |
 | `lib/auth/` | Sessions (HMAC cookies), GitHub OAuth with per-user encrypted tokens (`github-token.ts`: AES-256-GCM at rest, `githubClientFor(user)` / `githubClientForJob(job)` so every GitHub read acts as the owner), API tokens (hashed) and request authentication for the extension API. |
 | `lib/ext/` | Request schemas of `/api/ext/*`. |
 | `extension/` | The VS Code extension (TypeScript, no bundler): commands, workspace collector, git helper, results webview, preview/apply flows. |

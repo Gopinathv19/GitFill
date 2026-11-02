@@ -257,11 +257,11 @@ The extension sends relevant files, the requested diff, and paths needed for imp
 
 ### 4.6 Generate presentations
 
-GitFill can turn repository understanding into an editable presentation. The repository documents a pipeline involving a deck specification, layout, PPTX generation, LibreOffice rendering, visual checks, and repair.
+GitFill can turn repository understanding into a handbook-style presentation. Muse Wonder plans the outline (sections and one brief per page); each page is then composed in parallel from typed blocks (cards, stats, tables, callouts, code, and architecture, flow, sequence, state or decision diagrams) that cite the recorded claims. GitFill renders the pages in headless Chromium, measures overflow, empty space and diagram legibility in the browser, has Muse Spark review each page image, and repairs only the pages with defects.
 
-The generated artifact is intended to be editable, rather than a static image of slides. The app can also provide a PDF output.
+The outputs are a PDF and a `.pptx` with one full-slide image per page plus speaker notes, so the deck looks the same in every viewer. To change content, use the Revise box: a revision edits the deck specification and re-renders only what changed.
 
-**Demo suggestion:** create a short engineering or hackathon presentation, inspect the editable slides, and show the rendered PDF. Explain that the rendering/checking stage is part of the pipeline.
+**Demo suggestion:** create a 10-slide engineering presentation, page through the diagrams and evidence-backed cards, then revise one page ("make the architecture slide simpler") and show the new version.
 
 ---
 
@@ -306,7 +306,7 @@ The following paths are useful starting points when exploring the implementation
 - Node.js 22.
 - A Postgres database, such as Neon, or embedded PGlite for a single-process local run.
 - A Meta Model API key.
-- For presentation rendering: LibreOffice and poppler-utils. The provided Dockerfile installs presentation dependencies in its runtime image.
+- For presentation rendering: Chromium, installed with `npx playwright-core install chromium` (or point `CHROMIUM_PATH` at a system Chrome). The provided Dockerfile installs it in its runtime image.
 
 ### Run locally with embedded PGlite
 

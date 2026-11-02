@@ -5,7 +5,7 @@ import { generateIllustration } from "@/lib/ai/images";
 import { modelFor } from "@/lib/ai/models";
 import type { RepositoryAnalysis } from "@/lib/agent/analysis-schema";
 import { analyzeRepository } from "@/lib/agent/analyze";
-import { applyRevision, planDeck, planRevision } from "@/lib/agent/planner";
+import { applyRevision, deckEvidence, planDeck, planRevision } from "@/lib/agent/planner";
 import { githubClientForJob } from "@/lib/auth/github-token";
 import { ingestGitHubRepository } from "@/lib/connectors/github/ingest";
 import type { SourceSnapshot } from "@/lib/connectors/types";
@@ -15,6 +15,7 @@ import { buildEvidenceReport } from "@/lib/documents/evidence-report";
 import { generateReadme } from "@/lib/documents/readme";
 import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
+import { parseDeckSpec } from "@/lib/presentation/legacy";
 import { deckSpecSchema, normalizeDeckSpec, type DeckSpec } from "@/lib/presentation/spec";
 import { getStorage, safeFilename } from "@/lib/storage";
 import { generateRequestSchema, reviseRequestSchema } from "@/lib/validation/request";
@@ -135,7 +136,7 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   }
   await db.update(generationJobs).set({ snapshotId: snap!.id }).where(eq(generationJobs.id, job.id));
 
-  // 3. Planner (Muse Wonder) → validated deck spec.
+  // 3. Planner: Muse Wonder outlines the deck, then each page is composed in parallel.
   await recorder.setStage("planning_presentation");
   const { spec } = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request, recorder });
 
@@ -143,17 +144,23 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   const version = 1;
   const prefix = `decks/${deck!.id}/v${version}`;
 
-  // 4. Decorative artwork (Muse Image). Optional: failures never block the deck.
+  // 4. Cover artwork (Muse Image), only when the cover asks for it. Failures never block the deck.
   await recorder.setStage("generating_presentation");
   const assets = request.outputs.illustrations ? await makeIllustrations(spec, prefix, recorder) : {};
 
-  // 5. Generate → render → check → repair.
-  const footer = `GitFill · ${snapshot.displayName} @ ${snapshot.version.slice(0, 7)}`;
+  // 5. Render → check → repair.
   const built = await buildValidatedDeck({
     spec,
-    footer,
+    repoLabel: `${snapshot.displayName} · ${snapshot.branch}`,
+    evidenceLabel: `${snapshot.displayName} @ ${snapshot.version.slice(0, 7)}`,
+    coverMeta: [
+      ["Repository", snapshot.displayName],
+      ["Commit", `${snapshot.branch} · ${snapshot.version.slice(0, 7)}`],
+      ["Audience", spec.audience],
+    ],
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
+    evidence: deckEvidence({ snapshot, analysis: analysis.analysis, claims: analysis.claims }),
     client,
     recorder,
   });
@@ -185,9 +192,17 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   if (!latest) throw new Error("Deck has no versions.");
   const snap = (await db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)))[0]!;
   const claims = (await db.select().from(evidenceClaims).where(eq(evidenceClaims.snapshotId, snap.id))).map(toClaim);
-  const current = deckSpecSchema.parse(latest.spec);
+  const current = parseDeckSpec(latest.spec);
+  const summary = snap.summary as SnapshotSummary;
+  const evidence = summary?.analysis
+    ? deckEvidence({
+        snapshot: { displayName: `${snap.owner}/${snap.name}`, branch: snap.branch, version: snap.commitSha, stats: summary.stats, metadata: summary.metadata },
+        analysis: summary.analysis,
+        claims,
+      })
+    : undefined;
 
-  const plan = await planRevision({ client, spec: current, instruction, claims, recorder });
+  const plan = await planRevision({ client, spec: current, instruction, claims, evidence, recorder });
   const applied = applyRevision(current, plan);
   const { spec } = normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)));
 
@@ -197,16 +212,22 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   const themeChanged = spec.theme !== current.theme;
   const built = await buildValidatedDeck({
     spec,
-    footer: `GitFill · ${snap.owner}/${snap.name} @ ${snap.commitSha.slice(0, 7)}`,
+    repoLabel: `${snap.owner}/${snap.name} · ${snap.branch}`,
+    evidenceLabel: `${snap.owner}/${snap.name} @ ${snap.commitSha.slice(0, 7)}`,
+    coverMeta: [
+      ["Repository", `${snap.owner}/${snap.name}`],
+      ["Commit", `${snap.branch} · ${snap.commitSha.slice(0, 7)}`],
+      ["Audience", spec.audience],
+    ],
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
+    evidence,
     client,
     recorder,
     // Only changed slides need a fresh visual review, unless the theme changed every slide.
     reviewSlideIds: themeChanged ? undefined : new Set(applied.changedIds),
   });
 
-  const summary = snap.summary as SnapshotSummary;
   const snapshotView = { displayName: summary.displayName, sourceUrl: snap.repositoryUrl, branch: snap.branch, version: snap.commitSha } as SourceSnapshot;
   const extra: ExtraArtifact[] = [
     { type: "evidence_report", name: "evidence-report.md", data: Buffer.from(buildEvidenceReport(snapshotView, claims, built.spec)), mime: "text/markdown; charset=utf-8" },
@@ -275,11 +296,11 @@ async function persistVersion(
 }
 
 async function makeIllustrations(spec: DeckSpec, prefix: string, recorder: DbRecorder): Promise<Record<string, string>> {
-  const targets = spec.slides.filter((s) => s.layout === "title" || s.layout === "section").slice(0, 3);
+  const targets = spec.slides.filter((s) => s.layout === "cover" && s.visual.type === "art");
   const assets: Record<string, string> = {};
   await Promise.all(
     targets.map(async (slide) => {
-      const prompt = slide.layout === "title" && slide.illustrationPrompt ? slide.illustrationPrompt : `${spec.title}: ${slide.title}`;
+      const prompt = slide.layout === "cover" && slide.illustrationPrompt ? slide.illustrationPrompt : `${spec.title}: abstract technical artwork`;
       const event = await recorder.start("tool", "generate_illustration", { slide: slide.id, prompt }, modelFor("illustrator"));
       try {
         const png = await generateIllustration(prompt, recorder.modelObserver(), spec.theme);
