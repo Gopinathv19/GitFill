@@ -2,33 +2,29 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, GitCompareArrows } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ReuseDialog } from "./reuse-dialog";
-import { type Activity, upsertActivity } from "@/lib/client/activity";
+import type { Activity } from "@/lib/client/activity";
 import { api, ApiError, errorMessage } from "@/lib/client/api";
 import { postStream } from "@/lib/client/stream";
 import { refreshSessions, takePendingMessage } from "@/lib/client/sessions-store";
+import { finishTurn, newTurn, reduceTurn, stepCount, type Turn, type TurnEvent } from "@/lib/client/turn";
 import type { ChatMessage, RepoView } from "@/lib/client/types";
-import { cn, getInitials } from "@/lib/utils";
+import { AgentTurn } from "./agent-turn";
 import { AssistantMessage } from "./assistant-message";
 import { JobCard } from "./job-card";
-import { LiveTurn, TurnTrace } from "./live-turn";
-import { useUser } from "@/components/layout/user-context";
 
 /**
  * One chat session with GitFill's agent. Jobs it starts appear as live cards.
  * Mount with `key={sessionId}` so switching sessions starts from a clean state.
  */
 export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: { workspaceId: string; sessionId: string; repositories: RepoView[]; onActivity: () => void }) {
-  const user = useUser();
-  const userName = user.name ?? user.login;
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The turn being streamed, and the steps of turns finished in this view (keyed by reply id).
-  const [live, setLive] = useState<{ startedAt: number; activities: Activity[]; draft: string } | null>(null);
-  const [traces, setTraces] = useState<Record<string, { seconds: number; activities: Activity[] }>>({});
+  // The turn being streamed, and the turns finished in this view (keyed by reply id).
+  const [live, setLive] = useState<Turn | null>(null);
+  const [traces, setTraces] = useState<Record<string, Turn>>({});
   const bottom = useRef<HTMLDivElement>(null);
   // Guards against React's dev-mode double effect sending the first message twice.
   const started = useRef(false);
@@ -56,7 +52,7 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
   // Follow the live turn as steps and text arrive (instant scroll avoids jitter while streaming).
   useEffect(() => {
     if (live) bottom.current?.scrollIntoView({ block: "end" });
-  }, [live?.activities.length, live?.draft.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live]);
 
   /** Sends a message; resolves false when it never reached the server (the composer then restores the text). */
   async function send(message: string): Promise<boolean> {
@@ -66,19 +62,20 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
     setError(null);
     const optimistic: ChatMessage = { id: `tmp-${Date.now()}`, role: "user", content: trimmed, jobIds: [], createdAt: new Date().toISOString() };
     setMessages((m) => [...(m ?? []), optimistic]);
-    const startedAt = Date.now();
-    setLive({ startedAt, activities: [], draft: "" });
-    let activities: Activity[] = [];
+    let turn = newTurn(Date.now());
+    setLive(turn);
+    const apply = (e: TurnEvent) => {
+      turn = reduceTurn(turn, e, Date.now());
+      setLive(turn);
+    };
     let stored: ChatMessage[] | null = null;
     let accepted = false;
     try {
       await postStream(`/api/sessions/${sessionId}/messages`, { message: trimmed }, (event, data) => {
         if (event === "user") accepted = true;
-        else if (event === "activity") {
-          activities = upsertActivity(activities, data as Activity);
-          setLive((l) => l && { ...l, activities });
-        } else if (event === "text") setLive((l) => l && { ...l, draft: l.draft + (data as { delta: string }).delta });
-        else if (event === "text_reset") setLive((l) => l && { ...l, draft: "" });
+        else if (event === "activity") apply({ event: "activity", data: data as Activity });
+        else if (event === "text") apply({ event: "text", delta: (data as { delta: string }).delta });
+        else if (event === "text_reset") apply({ event: "text_reset" });
         else if (event === "done") stored = (data as { messages: ChatMessage[] }).messages;
         else if (event === "error") throw new Error((data as { message: string }).message);
       });
@@ -86,7 +83,8 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
       if (!final) throw new Error("The connection closed before the answer arrived. Reload in a moment to see it.");
       setMessages((m) => [...(m ?? []).filter((x) => x.id !== optimistic.id), ...final]);
       const reply = final.find((x) => x.role === "assistant");
-      if (reply) setTraces((t) => ({ ...t, [reply.id]: { seconds: Math.round((Date.now() - startedAt) / 1000), activities } }));
+      const done = finishTurn(turn, Date.now());
+      if (reply && (done.segments.length || stepCount(done))) setTraces((t) => ({ ...t, [reply.id]: done }));
       if (final.some((x) => x.jobIds.length)) onActivity();
       void refreshSessions();
     } catch (err) {
@@ -133,40 +131,24 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
               </p>
             </div>
           )}
-          {messages?.map((m) => (
-            <div key={m.id} className={cn("flex gap-3", m.role === "user" && "flex-row-reverse")}>
-              <Avatar className="mt-0.5 size-7">
-                <AvatarFallback className={cn("text-[11px]", m.role === "user" ? "bg-gradient-to-br from-indigo-500 to-violet-600 text-white" : "bg-primary text-primary-foreground")}>
-                  {m.role === "user" ? getInitials(userName) : "G"}
-                </AvatarFallback>
-              </Avatar>
-              <div className={cn("flex max-w-[85%] flex-col gap-2", m.role === "user" ? "items-end" : "w-full")}>
-                {m.role === "user" ? (
-                  <div className="whitespace-pre-wrap rounded-lg bg-primary px-3.5 py-2 text-sm text-primary-foreground">{m.content}</div>
-                ) : (
-                  <>
-                    {traces[m.id] && <TurnTrace seconds={traces[m.id]!.seconds} activities={traces[m.id]!.activities} />}
-                    <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} />
-                  </>
-                )}
+          {messages?.map((m) =>
+            m.role === "user" ? (
+              <div key={m.id} className="flex justify-end">
+                <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2 text-sm">{m.content}</div>
+              </div>
+            ) : (
+              <div key={m.id} className="flex flex-col gap-3">
+                {traces[m.id] ? <AgentTurn turn={traces[m.id]!} /> : null}
+                <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} />
                 {m.jobIds.map((id) => (
                   <div key={id} className="w-full min-w-72">
                     <JobCard jobId={id} onFinished={onActivity} />
                   </div>
                 ))}
               </div>
-            </div>
-          ))}
-          {live && (
-            <div className="flex gap-3">
-              <Avatar className="mt-0.5 size-7">
-                <AvatarFallback className="bg-primary text-[11px] text-primary-foreground">G</AvatarFallback>
-              </Avatar>
-              <div className="flex w-full max-w-[85%] flex-col">
-                <LiveTurn startedAt={live.startedAt} activities={live.activities} draft={live.draft} />
-              </div>
-            </div>
+            ),
           )}
+          {live && <AgentTurn turn={live} live />}
           <div ref={bottom} />
         </div>
       </div>

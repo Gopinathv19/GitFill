@@ -48,6 +48,8 @@ export interface DocumentSummary {
   id: string;
   kind: DocumentKind;
   title: string;
+  /** First paragraph of the document as plain text, for previews. */
+  excerpt: string | null;
   createdAt: string;
   workspaceId: string;
   workspaceName: string;

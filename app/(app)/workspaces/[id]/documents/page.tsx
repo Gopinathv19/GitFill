@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import { BookOpen, GitCompareArrows } from "lucide-react";
-import { DocumentList } from "@/components/documents/document-list";
+import { DocumentLibrary } from "@/components/documents/document-library";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import { ReuseDialog } from "@/components/workspace/reuse-dialog";
@@ -27,10 +27,14 @@ export default function WorkspaceDocumentsPage({ params }: { params: Promise<{ i
   return (
     <div className="space-y-6">
       <WorkspaceHeader id={data.id} name={data.name} description={data.description} actions={reuse || undefined} />
-      {docs?.length === 0 ? (
+      {docs?.length === 0 && !data.repositories.length ? (
         <EmptyState icon={BookOpen} title="No documents yet" description="Use Handbook or Compare commits on a repository, ask a question in chat, or write an implementation brief between two repositories." action={reuse || undefined} />
       ) : docs ? (
-        <DocumentList documents={docs} showWorkspace={false} />
+        <DocumentLibrary
+          documents={docs}
+          workspaces={[{ id: data.id, name: data.name, description: data.description, updatedAt: data.createdAt, repositories: data.repositories, presentationCount: data.presentations.length, documentCount: docs.length }]}
+          showWorkspace={false}
+        />
       ) : (
         <p className="text-sm text-muted-foreground">Loading…</p>
       )}

@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, Loader2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileCheck2, Loader2, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader as UiCardHeader, CardTitle } from "@/components/ui/card";
 import { Select, Textarea } from "@/components/ui/input";
+import { Segmented } from "@/components/workspace/segmented";
 import { api, ApiError } from "@/lib/client/api";
 import { cn as cx } from "@/lib/utils";
 
@@ -85,6 +86,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [slide, setSlide] = useState(0);
+  const [tab, setTab] = useState<"validation" | "evidence">("validation");
 
   useEffect(() => {
     api<DeckView>(`/api/presentations/${deckId}`)
@@ -96,13 +98,37 @@ export function PresentationView({ deckId }: { deckId: string }) {
   }, [deckId]);
 
   const version = useMemo(() => deck?.versions.find((v) => v.version === selected), [deck, selected]);
+  const previews = useMemo(
+    () => (version?.artifacts ?? []).filter((a) => a.type === "slide_preview").sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)),
+    [version],
+  );
+
+  // Arrow keys page through the slides, unless the user is typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if (e.key === "ArrowRight") setSlide((n) => Math.min(n + 1, Math.max(previews.length - 1, 0)));
+      if (e.key === "ArrowLeft") setSlide((n) => Math.max(n - 1, 0));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previews.length]);
+
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!deck || !version) return <p className="text-sm text-muted-foreground">Loading presentation…</p>;
 
-  const previews = version.artifacts.filter((a) => a.type === "slide_preview").sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0));
   const file = (type: Artifact["type"]) => version.artifacts.find((a) => a.type === type);
-  const current = previews[Math.min(slide, previews.length - 1)];
+  const index = Math.min(slide, Math.max(previews.length - 1, 0));
+  const current = previews[index];
   const repo = deck.repository;
+  const unresolved = version.validation?.summary.unresolved ?? 0;
+  // Slide titles may carry *accent* marks for the rendered page; show them as plain text here.
+  const titleOf = (i: number) => (version.spec.slides[i]?.title ?? "").replace(/\*+([^*]+)\*+/g, "$1");
+  const goTo = (i: number) => {
+    setSlide(i);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <div className="space-y-6">
@@ -141,81 +167,155 @@ export function PresentationView({ deckId }: { deckId: string }) {
       </div>
       {version.changeSummary && version.version > 1 ? <p className="text-sm text-muted-foreground">Change in v{version.version}: {version.changeSummary}</p> : null}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
-        <Card className="overflow-hidden">
-          {current ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={`/api/artifacts/${current.id}`} alt={`Slide ${(current.slideIndex ?? 0) + 1}: ${version.spec.slides[current.slideIndex ?? 0]?.title ?? ""}`} className="aspect-video w-full bg-black object-contain" />
-          ) : (
-            <p className="p-6 text-sm text-muted-foreground">No previews were rendered.</p>
-          )}
-          <div className="flex gap-2 overflow-x-auto border-t border-border p-3">
-            {previews.map((p, i) => (
-              <button
-                key={p.id}
-                onClick={() => setSlide(i)}
-                className={cx("shrink-0 overflow-hidden rounded-md border-2", i === slide ? "border-primary" : "border-transparent opacity-70 hover:opacity-100")}
-                aria-label={`Show slide ${i + 1}`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={`/api/artifacts/${p.id}`} alt="" className="h-16 w-28 object-cover" />
-              </button>
-            ))}
+      <Card className="overflow-hidden">
+        {current ? (
+          <div className="group relative bg-black">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`/api/artifacts/${current.id}`} alt={`Slide ${index + 1}: ${titleOf(index)}`} className="aspect-video w-full object-contain" />
+            <SlideArrow side="left" disabled={index === 0} onClick={() => setSlide(index - 1)} />
+            <SlideArrow side="right" disabled={index >= previews.length - 1} onClick={() => setSlide(index + 1)} />
           </div>
-        </Card>
-        <div className="space-y-6">
-          <ValidationPanel validation={version.validation} slides={version.spec.slides} />
-          <RevisionBox deckId={deck.id} busyJob={deck.latestJob && !["completed", "failed"].includes(deck.latestJob.status) ? deck.latestJob.id : null} />
+        ) : (
+          <p className="p-6 text-sm text-muted-foreground">No previews were rendered.</p>
+        )}
+        <div className="flex items-center justify-between gap-4 border-t px-4 py-2.5 text-sm">
+          <span className="min-w-0 truncate font-medium">{titleOf(index)}</span>
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+            {previews.length ? index + 1 : 0} / {previews.length}
+          </span>
         </div>
-      </div>
+        <div className="flex gap-2 overflow-x-auto border-t p-3">
+          {previews.map((p, i) => (
+            <button
+              key={p.id}
+              onClick={() => setSlide(i)}
+              className={cx("shrink-0 overflow-hidden rounded-md border-2 transition-opacity", i === index ? "border-primary" : "border-transparent opacity-60 hover:opacity-100")}
+              aria-label={`Show slide ${i + 1}`}
+              aria-current={i === index}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/api/artifacts/${p.id}`} alt="" className="h-[4.5rem] w-32 object-cover" />
+            </button>
+          ))}
+        </div>
+      </Card>
 
-      <EvidencePanel claims={deck.claims} repoUrl={repo.url} commit={repo.commitSha} />
+      <RevisionBox deckId={deck.id} busyJob={deck.latestJob && !["completed", "failed"].includes(deck.latestJob.status) ? deck.latestJob.id : null} />
+
+      <div className="space-y-4">
+        <div className="w-full sm:w-96">
+          <Segmented
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "validation", label: `Validation${unresolved ? ` · ${unresolved} open` : ""}`, icon: FileCheck2 },
+              { value: "evidence", label: `Evidence · ${deck.claims.length}`, icon: ShieldCheck },
+            ]}
+          />
+        </div>
+        {tab === "validation" ? (
+          <ValidationPanel validation={version.validation} slides={version.spec.slides} onSlide={goTo} />
+        ) : (
+          <EvidencePanel claims={deck.claims} repoUrl={repo.url} commit={repo.commitSha} />
+        )}
+      </div>
     </div>
   );
 }
 
-function ValidationPanel({ validation, slides }: { validation: Validation | null; slides: Version["spec"]["slides"] }) {
-  if (!validation) return null;
+function SlideArrow({ side, disabled, onClick }: { side: "left" | "right"; disabled: boolean; onClick: () => void }) {
+  const Icon = side === "left" ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={side === "left" ? "Previous slide" : "Next slide"}
+      className={cx(
+        "absolute top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white opacity-0 backdrop-blur transition-opacity hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden",
+        side === "left" ? "left-3" : "right-3",
+      )}
+    >
+      <Icon className="size-5" />
+    </button>
+  );
+}
+
+function ValidationPanel({ validation, slides, onSlide }: { validation: Validation | null; slides: Version["spec"]["slides"]; onSlide: (index: number) => void }) {
+  if (!validation) return <Card className="p-6 text-sm text-muted-foreground">No validation report for this version.</Card>;
   const s = validation.summary;
   const repairs = validation.rounds.flatMap((r) => r.repairs.map((x) => ({ ...x, round: r.round })));
-  const titleOf = (id: string) => {
+  const order = { high: 0, medium: 1, low: 2 } as const;
+  const open = [...validation.unresolved].sort((a, b) => order[a.severity] - order[b.severity] || a.slideIndex - b.slideIndex);
+  const SlideRef = ({ id }: { id: string }) => {
     const i = slides.findIndex((x) => x.id === id);
-    return i >= 0 ? `Slide ${i + 1}` : id;
+    if (i < 0) return <span className="text-muted-foreground">{id}</span>;
+    return (
+      <button type="button" onClick={() => onSlide(i)} className="font-medium text-foreground underline-offset-4 hover:underline" title={slides[i]?.title}>
+        Slide {i + 1}
+      </button>
+    );
   };
   return (
     <Card>
-      <CardHeader title="Validation" description={`${validation.rounds.length} render-and-check round(s)`} />
-      <div className="grid grid-cols-3 gap-2 p-4 text-center">
+      <div className="grid grid-cols-2 gap-3 border-b p-4 sm:grid-cols-4">
+        <Stat label="Render-and-check rounds" value={validation.rounds.length} />
         <Stat label="Issues found" value={s.detected} />
-        <Stat label="Repairs" value={s.repairsApplied} />
-        <Stat label="Unresolved" value={s.unresolved} tone={s.unresolved ? "warning" : "success"} />
+        <Stat label="Repairs applied" value={s.repairsApplied} />
+        <Stat label="Still open" value={s.unresolved} tone={s.unresolved ? "warning" : "success"} />
       </div>
-      {s.finalAverageScore !== null ? <p className="px-4 pb-3 text-xs text-muted-foreground">Muse Spark visual review score: {s.finalAverageScore}/10 average</p> : null}
-      {repairs.length ? (
-        <ul className="space-y-2 border-t border-border px-4 py-3 text-xs">
-          {repairs.map((r, i) => (
-            <li key={i}>
-              <Badge variant="success">{r.kind === "model" ? "AI repair" : "Rule repair"}</Badge> <span className="text-muted-foreground">{titleOf(r.slideId)}:</span> {r.description}
-            </li>
-          ))}
-        </ul>
+      {s.finalAverageScore !== null ? (
+        <p className="border-b px-4 py-2.5 text-xs text-muted-foreground">
+          Muse Spark visual review: <span className="font-medium text-foreground">{s.finalAverageScore}/10</span> average across the final slides
+        </p>
       ) : null}
-      {validation.unresolved.length ? (
-        <ul className="space-y-2 border-t border-border px-4 py-3 text-xs">
-          {validation.unresolved.map((u, i) => (
-            <li key={i}>
-              <Badge variant={u.severity === "high" ? "danger" : u.severity === "medium" ? "warning" : "outline"}>{u.severity}</Badge> <span className="text-muted-foreground">{titleOf(u.slideId)}:</span> {u.message}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <div className="grid divide-y lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+        <section className="p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Still open ({open.length})</h3>
+          {open.length ? (
+            <ul className="space-y-2.5 text-sm">
+              {open.map((u, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <Badge variant={u.severity === "high" ? "danger" : u.severity === "medium" ? "warning" : "outline"} className="mt-0.5 shrink-0">
+                    {u.severity}
+                  </Badge>
+                  <span>
+                    <SlideRef id={u.slideId} /> <span className="text-muted-foreground">·</span> {u.message}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Every check passed on the final render.</p>
+          )}
+        </section>
+        <section className="p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Repairs ({repairs.length})</h3>
+          {repairs.length ? (
+            <ul className="space-y-2.5 text-sm">
+              {repairs.map((r, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <Badge variant="success" className="mt-0.5 shrink-0">
+                    {r.kind === "model" ? "AI" : "Rule"}
+                  </Badge>
+                  <span>
+                    <SlideRef id={r.slideId} /> <span className="text-muted-foreground">·</span> {r.description}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No repairs were needed.</p>
+          )}
+        </section>
+      </div>
     </Card>
   );
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: "warning" | "success" }) {
   return (
-    <div className="rounded-lg bg-muted px-2 py-2">
+    <div className="rounded-lg bg-muted px-3 py-2.5">
       <div className={cx("text-lg font-semibold", tone === "warning" && "text-amber-600", tone === "success" && "text-emerald-600")}>{value}</div>
       <div className="text-[11px] text-muted-foreground">{label}</div>
     </div>
@@ -243,7 +343,7 @@ function RevisionBox({ deckId, busyJob }: { deckId: string; busyJob: string | nu
 
   return (
     <Card>
-      <CardHeader title="Revise" description="Describe the change. Unaffected slides are kept as they are; the result becomes a new version." />
+      <CardHeader title="Revise this presentation" description="Describe the change. Slides you don't mention stay as they are, and the result becomes a new version." />
       {busyJob ? (
         <p className="p-4 text-sm">
           A revision is in progress.{" "}
@@ -252,15 +352,25 @@ function RevisionBox({ deckId, busyJob }: { deckId: string; busyJob: string | nu
           </a>
         </p>
       ) : (
-        <form onSubmit={submit} className="space-y-3 p-4">
-          <Textarea aria-label="Revision request" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Make the architecture slide easier to understand and add a slide on the database design." />
-          <Button type="submit" disabled={submitting || text.trim().length < 3} className="w-full">
+        <form onSubmit={submit} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+          <Textarea
+            aria-label="Revision request"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim().length >= 3) e.currentTarget.form?.requestSubmit();
+            }}
+            rows={2}
+            placeholder="e.g. Make the architecture slide easier to understand and add a slide on the database design."
+            className="min-h-[3.5rem] flex-1"
+          />
+          <Button type="submit" disabled={submitting || text.trim().length < 3} className="sm:w-44">
             {submitting ? <Spinner /> : null}
             Apply revision
           </Button>
-          {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
         </form>
       )}
+      {error ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{error}</p> : null}
     </Card>
   );
 }

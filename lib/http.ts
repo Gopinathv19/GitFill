@@ -9,6 +9,10 @@ export class NotFoundError extends Error {
   override name = "NotFoundError";
 }
 
+export class ConflictError extends Error {
+  override name = "ConflictError";
+}
+
 /** Consistent JSON envelope: { data } on success, { error: { code, message } } on failure. */
 export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ data }, { status });
@@ -28,6 +32,7 @@ export function handleError(err: unknown) {
   }
   if (err instanceof UnauthorizedError) return fail(401, "unauthorized", err.message);
   if (err instanceof NotFoundError) return fail(404, "not_found", err.message);
+  if (err instanceof ConflictError) return fail(409, "conflict", err.message);
   if (err instanceof InvalidRepositoryUrlError) return fail(400, "invalid_repository_url", err.message);
   // GitHub errors carry user-safe messages (rate limits, not found, private repositories).
   // 401 from GitHub is reported as 409 so the browser client does not treat it as a GitFill sign-out.

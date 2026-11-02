@@ -4,7 +4,7 @@ import { githubClientFor } from "@/lib/auth/github-token";
 import { canonicalRepoUrl, parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
 import { artifacts, chatMessages, chatSessions, deckVersions, decks, documents, generationJobs, projects, workspaceRepositories, workspaces } from "@/lib/db/schema";
-import { NotFoundError } from "@/lib/http";
+import { ConflictError, NotFoundError } from "@/lib/http";
 
 export const createWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -133,6 +133,13 @@ export async function addRepository(db: Database, userId: string, workspaceId: s
     input.mode === "import"
       ? { workspaceId, source: "imported" as const, ...(await lookupRepository(db, userId, input.url)) }
       : { workspaceId, source: "created" as const, name: input.name, description: input.description || null };
+  if (values.source === "imported") {
+    const existing = await db
+      .select({ id: workspaceRepositories.id })
+      .from(workspaceRepositories)
+      .where(and(eq(workspaceRepositories.workspaceId, workspaceId), eq(workspaceRepositories.repositoryUrl, values.repositoryUrl)));
+    if (existing.length) throw new ConflictError(`${values.owner}/${values.name} is already in this workspace.`);
+  }
   const [repo] = await db.insert(workspaceRepositories).values(values).returning();
   await db.update(workspaces).set({ updatedAt: new Date() }).where(eq(workspaces.id, workspaceId));
   return repoView(repo!);

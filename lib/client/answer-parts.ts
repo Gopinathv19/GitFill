@@ -31,10 +31,40 @@ const FOOTER = /\n*^-{3,}[ \t]*\n+[ \t]*(?:<sub>([\s\S]*?)<\/sub>|\*([^*\n][^\n]
 
 export const EVIDENCE_HREF = "#gf-ev-";
 
+/** Gives every footnote ref in `markdown` a suffix (`[^C1]` → `[^C1-2]`), definitions included. */
+export function suffixFootnotes(markdown: string, suffix: string): string {
+  return markdown.replace(/\[\^([\w-]+)\]/g, (_, ref: string) => `[^${ref}-${suffix}]`);
+}
+
+/**
+ * A chat reply can hold several answers (one per repository), each numbering its evidence from
+ * C1. Footnote refs must be unique within a message, so every answer after the first gets its
+ * refs suffixed. An answer ends where its footnote definitions end; the next body line starts
+ * the next answer. Messages that are already unique come back unchanged.
+ */
+export function uniqueFootnotes(markdown: string): string {
+  const lines = markdown.split("\n");
+  const defs = lines.map((l) => /^\[\^([\w-]+)\]:/.exec(l)?.[1] ?? null);
+  const all = defs.filter((d): d is string => d !== null);
+  if (new Set(all).size === all.length) return markdown;
+  let segment = 0;
+  let seenDefs = false;
+  return lines
+    .map((line, i) => {
+      if (defs[i]) seenDefs = true;
+      else if (seenDefs && line.trim()) {
+        segment++;
+        seenDefs = false;
+      }
+      return segment ? suffixFootnotes(line, String(segment + 1)) : line;
+    })
+    .join("\n");
+}
+
 export function splitAnswer(markdown: string): AnswerParts {
   const evidence: EvidenceItem[] = [];
   const kept: string[] = [];
-  for (const line of markdown.split("\n")) {
+  for (const line of uniqueFootnotes(markdown).split("\n")) {
     const m = FOOTNOTE.exec(line);
     if (!m) {
       kept.push(line);

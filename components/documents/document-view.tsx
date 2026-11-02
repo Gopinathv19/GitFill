@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, errorMessage } from "@/lib/client/api";
+import { rememberDocument } from "@/lib/client/recent-documents";
 import type { DocumentView as DocumentViewData } from "@/lib/client/types";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +23,13 @@ export function DocumentView({ documentId }: { documentId: string }) {
   const [tab, setTab] = useState<"document" | "evidence">("document");
 
   useEffect(() => {
-    api<DocumentViewData>(`/api/documents/${documentId}`).then(setDoc, (e: Error) => setError(e.message));
+    api<DocumentViewData>(`/api/documents/${documentId}`).then(
+      (d) => {
+        setDoc(d);
+        rememberDocument(d.id);
+      },
+      (e: Error) => setError(e.message),
+    );
   }, [documentId]);
 
   async function remove() {

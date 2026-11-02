@@ -51,7 +51,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, onAsk 
 
   if (!parts.evidence.length) {
     return (
-      <div className="rounded-lg bg-muted px-3.5 py-2 text-sm">
+      <div className="text-sm">
         <Markdown className="text-sm">{parts.followUps.length && onAsk ? parts.body : content}</Markdown>
         {followUps}
       </div>

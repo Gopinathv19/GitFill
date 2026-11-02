@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { api, errorMessage } from "@/lib/client/api";
 import { refreshWorkspaces } from "@/lib/client/workspaces-store";
+import type { UserRepoView } from "@/lib/client/types";
+import { GitHubRepoPicker } from "./github-repo-picker";
 import { Segmented } from "./segmented";
 
 /** Create a workspace blank, or seeded by importing a GitHub repository. */
@@ -18,18 +20,20 @@ export function NewWorkspaceDialog({ trigger, defaultMode = "blank" }: { trigger
   const [mode, setMode] = useState<"blank" | "import">(defaultMode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [picked, setPicked] = useState<UserRepoView | null>(null);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const url = String(f.get("url") ?? "").trim();
-    const name = String(f.get("name") ?? "").trim() || (mode === "import" ? url.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\/$/, "") : "");
+    const repoUrl = url.trim();
+    const name = String(f.get("name") ?? "").trim() || (mode === "import" ? picked?.fullName ?? repoUrl.replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/(\.git)?\/?$/, "") : "");
     setBusy(true);
     setError(null);
     try {
       const { id } = await api<{ id: string }>("/api/workspaces", {
         method: "POST",
-        body: JSON.stringify({ name, description: String(f.get("description") ?? "") || undefined, importUrl: mode === "import" ? url : undefined }),
+        body: JSON.stringify({ name, description: String(f.get("description") ?? "") || undefined, importUrl: mode === "import" ? repoUrl : undefined }),
       });
       await refreshWorkspaces();
       setOpen(false);
@@ -42,7 +46,7 @@ export function NewWorkspaceDialog({ trigger, defaultMode = "blank" }: { trigger
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); setError(null); if (o) setMode(defaultMode); }}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); setError(null); if (o) { setMode(defaultMode); setUrl(""); setPicked(null); } }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -59,19 +63,22 @@ export function NewWorkspaceDialog({ trigger, defaultMode = "blank" }: { trigger
         />
         <form onSubmit={submit} className="space-y-4">
           {mode === "import" && (
-            <div>
-              <Label htmlFor="ws-url">GitHub repository</Label>
-              <Input id="ws-url" name="url" required placeholder="https://github.com/owner/repo" autoComplete="off" />
-              <p className="mt-1.5 text-xs text-muted-foreground">Public repositories only for now.</p>
-            </div>
+            <GitHubRepoPicker
+              id="ws-url"
+              value={url}
+              onChange={(u, repo) => {
+                setUrl(u);
+                setPicked(repo ?? null);
+              }}
+            />
           )}
           <div>
             <Label htmlFor="ws-name">Name{mode === "import" && <span className="font-normal text-muted-foreground"> (defaults to the repo name)</span>}</Label>
-            <Input id="ws-name" name="name" required={mode === "blank"} maxLength={80} placeholder={mode === "blank" ? "e.g. Platform architecture" : "owner/repo"} />
+            <Input id="ws-name" name="name" required={mode === "blank"} maxLength={80} placeholder={mode === "blank" ? "e.g. Platform architecture" : picked?.fullName ?? "owner/repo"} />
           </div>
           <div>
             <Label htmlFor="ws-desc">Description <span className="font-normal text-muted-foreground">(optional)</span></Label>
-            <Textarea id="ws-desc" name="description" maxLength={300} className="min-h-16" />
+            <Textarea id="ws-desc" name="description" maxLength={300} className="min-h-16" placeholder={mode === "import" && picked?.description ? picked.description : undefined} />
           </div>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">

@@ -55,7 +55,7 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar">
       <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <Link href="/workspaces" aria-label="GitFill home" className="min-w-0 flex-1">
+        <Link href="/new" aria-label="GitFill home: new session" className="min-w-0 flex-1">
           <Logo className="[&>span:first-child]:size-7 [&>span:first-child]:text-xs" />
         </Link>
         {onCollapse && (

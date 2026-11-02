@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MuseClient, type ChatCompletionMessageParam } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
+import { suffixFootnotes } from "@/lib/client/answer-parts";
 import { env } from "@/lib/config/env";
 import type { Database } from "@/lib/db";
 import { THEMES } from "@/lib/presentation/spec";
@@ -174,7 +175,9 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     maxTokens: 2000,
   });
   logTimings(recorder, `chat turn (${jobIds.length} jobs started, ${attachments.length} answers attached)`);
-  const reply = [result.message, attachments.join("\n\n---\n\n")].filter(Boolean).join("\n\n");
+  // Each answer numbers its evidence from C1; keep refs unique when several are attached.
+  const answers = attachments.map((a, i) => (i ? suffixFootnotes(a, String(i + 1)) : a));
+  const reply = [result.message, answers.join("\n\n---\n\n")].filter(Boolean).join("\n\n");
   return { reply, jobIds };
 }
 

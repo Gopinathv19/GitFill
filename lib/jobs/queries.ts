@@ -84,6 +84,8 @@ export async function listRecent(db: Database, userId: string, limit = 20) {
       deckId: j.deckId,
       documentId: j.documentId,
       createdAt: j.createdAt,
+      startedAt: j.startedAt,
+      completedAt: j.completedAt,
       errorMessage: j.errorMessage,
       workspaceId,
       workspaceName,
@@ -150,12 +152,35 @@ export async function getDeckView(db: Database, deckId: string) {
 
 type DocumentRow = typeof documents.$inferSelect;
 
+/** First prose paragraph of a document, as plain text, for list previews. */
+export function documentExcerpt(markdown: string, max = 220): string | null {
+  let inFence = false;
+  for (const raw of markdown.split(/\n\s*\n/)) {
+    const block = raw.trim();
+    const wasInFence = inFence;
+    // An odd number of ``` markers opens or closes a code fence that spans blocks.
+    if ((block.match(/```/g)?.length ?? 0) % 2 === 1) inFence = !inFence;
+    if (wasInFence || inFence || !block || /^(#|```|\||>|[-*+] |\d+\. |<|\[\^)/.test(block)) continue;
+    const text = block
+      .replace(/\[\^[^\]]+\]/g, "")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Skip short lines and metadata lines such as "Scope: repository · Audience: …".
+    if (text.length < 40 || (text.match(/ · /g)?.length ?? 0) >= 2) continue;
+    return text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")}…` : text;
+  }
+  return null;
+}
+
 function documentSummary(d: DocumentRow, workspaceId: string, workspaceName: string) {
   const meta = (d.metadata ?? {}) as Record<string, unknown>;
   return {
     id: d.id,
     kind: d.kind,
     title: d.title,
+    excerpt: documentExcerpt(d.markdown ?? ""),
     createdAt: d.createdAt,
     workspaceId,
     workspaceName,

@@ -38,5 +38,5 @@ export async function findUser(db: Database, id: string) {
 
 /** Only same-site paths, so a crafted ?next= cannot redirect off-site. */
 export function safeNext(next: string | null | undefined): string {
-  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/workspaces";
+  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/new";
 }

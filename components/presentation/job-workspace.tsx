@@ -3,25 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Loader2, X } from "lucide-react";
+import { ArrowLeft, Check, Loader2 } from "lucide-react";
+import { ActivityTimeline, type JobEvent } from "@/components/jobs/activity-timeline";
 import { PageHeader } from "@/components/shared/page-header";
 import { JOB_KIND_LABELS, JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { api } from "@/lib/client/api";
 import { cn } from "@/lib/utils";
-
-interface JobEvent {
-  id: string;
-  type: "tool" | "model" | "step";
-  name: string;
-  status: "started" | "succeeded" | "failed";
-  model: string | null;
-  input: unknown;
-  output: unknown;
-  error: string | null;
-  durationMs: number | null;
-}
 
 interface JobView {
   id: string;
@@ -36,6 +25,9 @@ interface JobView {
   documentId: string | null;
   workspaceId: string;
   usage: { inputTokens: number; outputTokens: number };
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
   events: JobEvent[];
 }
 
@@ -52,7 +44,7 @@ export function JobWorkspace({ jobId }: { jobId: string }) {
   const router = useRouter();
   const [job, setJob] = useState<JobView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showModel, setShowModel] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -62,6 +54,7 @@ export function JobWorkspace({ jobId }: { jobId: string }) {
         const data = await api<JobView>(`/api/jobs/${jobId}`);
         if (!alive) return;
         setJob(data);
+        setNow(Date.now());
         setError(null);
         if (!TERMINAL.has(data.status)) timer = setTimeout(poll, 2000);
       } catch (e) {
@@ -81,7 +74,9 @@ export function JobWorkspace({ jobId }: { jobId: string }) {
 
   const PIPELINE = PIPELINES[job.kind] ?? PIPELINES.handbook;
   const stageIndex = PIPELINE.indexOf(job.status === "repairing_presentation" ? "validating_presentation" : job.status);
-  const events = job.events.filter((e) => showModel || e.type !== "model");
+  const running = !TERMINAL.has(job.status);
+  const started = job.startedAt ?? job.createdAt;
+  const elapsedMs = started ? (job.completedAt ? new Date(job.completedAt).getTime() : now) - new Date(started).getTime() : 0;
   const modelCalls = job.events.filter((e) => e.type === "model").length;
   const toolCalls = job.events.filter((e) => e.type === "tool").length;
 
@@ -144,55 +139,21 @@ export function JobWorkspace({ jobId }: { jobId: string }) {
         })}
       </ol>
 
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4 space-y-0 border-b">
-          <div className="space-y-1.5">
-            <CardTitle>Agent activity</CardTitle>
-            <CardDescription>
-              {toolCalls} tool calls · {modelCalls} model calls · {(job.usage.inputTokens / 1000).toFixed(1)}k in / {(job.usage.outputTokens / 1000).toFixed(1)}k out tokens
-            </CardDescription>
-          </div>
-          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={showModel} onChange={(e) => setShowModel(e.target.checked)} />
-            Show model calls
-          </label>
-        </CardHeader>
-        <ul className="max-h-[32rem] divide-y overflow-y-auto font-mono text-xs">
-          {events.length === 0 && <li className="px-6 py-4 text-muted-foreground">Waiting for the worker to pick up this job…</li>}
-          {events.map((e) => (
-            <li key={e.id} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 px-6 py-2.5">
-              <span
-                className={cn(
-                  "mt-0.5 rounded px-1.5 py-0.5 text-[10px] uppercase",
-                  e.type === "tool" && "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-400",
-                  e.type === "step" && "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-400",
-                  e.type === "model" && "bg-muted text-muted-foreground",
-                )}
-              >
-                {e.type}
-              </span>
-              <span className="min-w-0">
-                <span>{e.name}</span>
-                {e.model && <span className="text-muted-foreground"> · {e.model}</span>}
-                <Detail value={e.status === "failed" ? e.error : e.output ?? e.input} failed={e.status === "failed"} />
-              </span>
-              <span className={cn("whitespace-nowrap", e.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                {e.status === "started" ? <Loader2 className="size-3 animate-spin" /> : e.status === "failed" ? <X className="size-3.5" /> : e.durationMs !== null ? `${(e.durationMs / 1000).toFixed(1)}s` : "ok"}
-              </span>
-            </li>
-          ))}
-        </ul>
+      <Card className="p-6">
+        <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2 border-b pb-4">
+          <h2 className="text-sm font-semibold">{running ? "GitFill is working" : job.status === "failed" ? "Stopped" : "Done"}</h2>
+          <p className="font-mono text-xs text-muted-foreground">
+            {elapsedMs > 0 ? `${formatElapsed(elapsedMs)} · ` : ""}
+            {toolCalls} tool calls · {modelCalls} model calls · {(job.usage.inputTokens / 1000).toFixed(1)}k in / {(job.usage.outputTokens / 1000).toFixed(1)}k out tokens
+          </p>
+        </div>
+        <ActivityTimeline events={job.events} running={running} currentStage={STAGE_LABELS[job.status]} />
       </Card>
     </div>
   );
 }
 
-function Detail({ value, failed }: { value: unknown; failed: boolean }) {
-  if (value === null || value === undefined) return null;
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return (
-    <span className={cn("mt-0.5 block truncate", failed ? "text-destructive" : "text-muted-foreground")} title={text}>
-      {text}
-    </span>
-  );
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }

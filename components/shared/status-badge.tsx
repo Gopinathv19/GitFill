@@ -5,7 +5,7 @@ export const STAGE_LABELS: Record<string, string> = {
   pending: "Queued",
   analyzing_repository: "Analyzing repository",
   planning_presentation: "Planning slides",
-  generating_presentation: "Generating PowerPoint",
+  generating_presentation: "Building slides",
   rendering_slides: "Rendering slides",
   validating_presentation: "Validating",
   repairing_presentation: "Repairing slides",
