@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 /** While an answer streams, the diagram's JSON block is not useful to read: show a placeholder. */
 function readableDraft(draft: string): string {
   return draft
-    .replace(/```diagram[\s\S]*?(```|$)/g, "\n\n*Drawing a diagram…*\n\n")
+    // Diagrams are drawn once the answer is complete; mid-stream they are half-written and invalid.
+    .replace(/```(?:diagram|mermaid)[\s\S]*?(```|$)/g, "\n\n*Drawing a diagram…*\n\n")
     .replace(/^#{1,4}\s+(Not verified|Ask next)[\s\S]*$/im, "")
     .trim();
 }

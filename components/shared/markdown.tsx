@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useId, useRef, useState } from "react";
+import { Component, memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -59,7 +59,7 @@ function MarkdownBlock({ children, evidence }: { children: string; evidence?: Ev
         code({ className: cls, children: code, ...props }) {
           const match = /language-(\w+)/.exec(cls ?? "");
           const text = String(code).replace(/\n$/, "");
-          if (match?.[1] === "mermaid") return <Mermaid chart={text} />;
+          if (match?.[1] === "mermaid") return <DiagramBoundary chart={text}><Mermaid chart={text} /></DiagramBoundary>;
           return (
             <code className={cls} {...props}>
               {code}
@@ -95,6 +95,29 @@ function MarkdownBlock({ children, evidence }: { children: string; evidence?: Ev
   );
 }
 
+function DiagramFallback({ chart, className }: { chart: string; className?: string }) {
+  return (
+    <div className={cn("rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs dark:bg-amber-950/30", className)}>
+      <p className="font-medium text-amber-700 dark:text-amber-400">Diagram could not be rendered.</p>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
+    </div>
+  );
+}
+
+/** Whatever goes wrong inside one diagram stays inside it: the rest of the answer and the page keep rendering. */
+class DiagramBoundary extends Component<{ chart: string; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidUpdate(prev: { chart: string }) {
+    if (prev.chart !== this.props.chart && this.state.failed) this.setState({ failed: false });
+  }
+  render() {
+    return this.state.failed ? <DiagramFallback chart={this.props.chart} /> : this.props.children;
+  }
+}
+
 /** One Mermaid diagram. Re-renders when the theme changes; shows the source if it fails to parse. */
 export function Mermaid({ chart, className }: { chart: string; className?: string }) {
   const { resolvedTheme } = useTheme();
@@ -105,17 +128,27 @@ export function Mermaid({ chart, className }: { chart: string; className?: strin
 
   useEffect(() => {
     let alive = true;
+    const renderId = `gf-${id}-${resolvedTheme ?? "light"}`;
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: resolvedTheme === "dark" ? "dark" : "neutral", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
-        const { svg: out } = await mermaid.render(`gf-${id}-${resolvedTheme ?? "light"}`, chart);
+        // suppressErrorRendering: on a parse error Mermaid otherwise draws its "Syntax error" bomb into a
+        // temporary element on <body> and leaves it there (common while an answer is still streaming).
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: resolvedTheme === "dark" ? "dark" : "neutral", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+        // Validate first: parse() throws without touching the page.
+        await mermaid.parse(chart);
+        const { svg: out } = await mermaid.render(renderId, chart);
         if (alive) {
           setSvg(out);
           setError(null);
         }
       } catch (err) {
         if (alive) setError(err instanceof Error ? err.message : "Diagram could not be rendered.");
+      } finally {
+        // Mermaid renders inside a temporary #d<id> wrapper on <body>; remove it if a failed render left it behind.
+        // (Never look up #<id> itself: the diagram shown on the page carries that id.)
+        const leftover = document.getElementById(`d${renderId}`);
+        if (leftover?.parentElement === document.body) leftover.remove();
       }
     })();
     return () => {
@@ -123,14 +156,7 @@ export function Mermaid({ chart, className }: { chart: string; className?: strin
     };
   }, [chart, id, resolvedTheme]);
 
-  if (error) {
-    return (
-      <div className={cn("rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs dark:bg-amber-950/30", className)}>
-        <p className="font-medium text-amber-700 dark:text-amber-400">Diagram could not be rendered.</p>
-        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
-      </div>
-    );
-  }
+  if (error) return <DiagramFallback chart={chart} className={className} />;
   if (!svg) return <div className={cn("h-32 animate-pulse rounded-md bg-muted/50", className)} />;
   return <div ref={ref} className={cn("gf-mermaid overflow-x-auto rounded-md border bg-card p-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full", className)} dangerouslySetInnerHTML={{ __html: svg }} />;
 }

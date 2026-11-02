@@ -134,3 +134,19 @@ describe("GitHubClient.openPullRequest", () => {
     expect((err as Error).message).toMatch(/did not allow GitFill to write.*Resource not accessible/);
   });
 });
+
+describe("README diagrams", async () => {
+  const { demoteBrokenDiagrams } = await import("@/lib/documents/readme");
+  it("keeps valid Mermaid and turns broken diagrams into plain text", () => {
+    const good = "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```";
+    const bad = "```mermaid\nflowchart TD\n  A[Start --> B\n```";
+    const { markdown, dropped } = demoteBrokenDiagrams(`${good}\n\n${bad}`);
+    expect(dropped).toBe(1);
+    expect(markdown).toContain(good);
+    expect(markdown).toContain("```text\nflowchart TD\n  A[Start --> B\n```");
+  });
+
+  it("does not choke on a stray percent sign in an image path", () => {
+    expect(dropMissingImages("![x](docs/100%.png)", { inventory: [] }).removed).toEqual(["docs/100%.png"]);
+  });
+});
