@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { applyRevision, revisionStepsSchema } from "@/lib/agent/planner";
 import { sampleDeck } from "../fixtures/sample-deck";
 
-const empty = { id: null, after: null, layout: null, section: null, title: null, change: null, theme: null };
+const empty = { id: null, after: null, layout: null, section: null, title: null, change: null, theme: null, labels: null };
 
 describe("revision steps", () => {
   it("accepts flat operations with unused fields set to null", () => {
-    const parsed = revisionStepsSchema.parse({ summary: "Shorter title.", operations: [{ ...empty, op: "replace", id: "s2", change: "Shorten the title." }, { ...empty, op: "hide_commit" }] });
-    expect(parsed.operations.map((o) => o.op)).toEqual(["replace", "hide_commit"]);
+    const parsed = revisionStepsSchema.parse({ summary: "Shorter title.", operations: [{ ...empty, op: "replace", id: "s2", change: "Shorten the title." }, { ...empty, op: "set_labels", labels: { header: "", footer: "evidence: acme/app", cover: [{ label: "Repository", value: "acme/app" }] } }] });
+    expect(parsed.operations.map((o) => o.op)).toEqual(["replace", "set_labels"]);
   });
 
   it("names the fields an operation is missing", () => {
@@ -22,13 +22,11 @@ describe("revision steps", () => {
 });
 
 describe("applyRevision", () => {
-  it("hides and shows the commit without touching slides", () => {
-    const spec = sampleDeck;
-    expect(spec.showCommit).toBe(true);
-    const hidden = applyRevision(spec, { summary: "", operations: [{ op: "hide_commit" }] });
-    expect(hidden.spec.showCommit).toBe(false);
-    expect(hidden.spec.slides).toEqual(spec.slides);
-    expect(hidden.changedIds).toEqual([]);
-    expect(applyRevision(hidden.spec, { summary: "", operations: [{ op: "show_commit" }] }).spec.showCommit).toBe(true);
+  it("replaces the labels without touching slides", () => {
+    const labels = { header: "acme/app", footer: "", cover: [{ label: "Repository", value: "acme/app" }] };
+    const applied = applyRevision(sampleDeck, { summary: "", operations: [{ op: "set_labels", labels }] });
+    expect(applied.spec.labels).toEqual(labels);
+    expect(applied.spec.slides).toEqual(sampleDeck.slides);
+    expect(applied.changedIds).toEqual([]);
   });
 });

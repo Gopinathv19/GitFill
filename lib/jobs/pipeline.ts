@@ -16,6 +16,7 @@ import { generateReadme } from "@/lib/documents/readme";
 import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
 import { parseDeckSpec } from "@/lib/presentation/legacy";
+import { withLabels } from "@/lib/presentation/labels";
 import { deckSpecSchema, normalizeDeckSpec, type DeckSpec } from "@/lib/presentation/spec";
 import { getStorage, safeFilename } from "@/lib/storage";
 import { generateRequestSchema, reviseRequestSchema } from "@/lib/validation/request";
@@ -149,9 +150,10 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   const assets = request.outputs.illustrations ? await makeIllustrations(spec, prefix, recorder) : {};
 
   // 5. Render → check → repair.
+  const labeled = withLabels(spec, { repository: snapshot.displayName, branch: snapshot.branch, sha: snapshot.version });
   const built = await buildValidatedDeck({
-    spec,
-    ...deckLabels(spec, snapshot.displayName, snapshot.branch, snapshot.version),
+    spec: labeled.spec,
+    ...labeled.render,
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
     evidence: deckEvidence({ snapshot, analysis: analysis.analysis, claims: analysis.claims }),
@@ -186,7 +188,9 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   if (!latest) throw new Error("Deck has no versions.");
   const snap = (await db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)))[0]!;
   const claims = (await db.select().from(evidenceClaims).where(eq(evidenceClaims.snapshotId, snap.id))).map(toClaim);
-  const current = parseDeckSpec(latest.spec);
+  const repo = { repository: `${snap.owner}/${snap.name}`, branch: snap.branch, sha: snap.commitSha };
+  // Labels are filled in first so the planner sees them as editable content, like the slides.
+  const current = withLabels(parseDeckSpec(latest.spec), repo).spec;
   const summary = snap.summary as SnapshotSummary;
   const evidence = summary?.analysis
     ? deckEvidence({
@@ -206,9 +210,10 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   const prefix = `decks/${deck.id}/v${version}`;
   const assets = (latest.assets ?? {}) as Record<string, string>;
   const themeChanged = spec.theme !== current.theme;
+  const labeled = withLabels(spec, repo);
   const built = await buildValidatedDeck({
-    spec,
-    ...deckLabels(spec, `${snap.owner}/${snap.name}`, snap.branch, snap.commitSha),
+    spec: labeled.spec,
+    ...labeled.render,
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
     evidence,
@@ -304,16 +309,6 @@ async function makeIllustrations(spec: DeckSpec, prefix: string, recorder: DbRec
     }),
   );
   return assets;
-}
-
-/** Header, footer and cover labels; the commit SHA is left out when the deck hides it. */
-function deckLabels(spec: DeckSpec, repository: string, branch: string, sha: string) {
-  const commit = spec.showCommit ? sha.slice(0, 7) : "";
-  return {
-    repoLabel: `${repository} · ${branch}`,
-    evidenceLabel: commit ? `${repository} @ ${commit}` : repository,
-    coverMeta: [["Repository", repository], spec.showCommit ? ["Commit", `${branch} · ${commit}`] : ["Branch", branch], ["Audience", spec.audience]] as Array<[string, string]>,
-  };
 }
 
 class RevisionError extends Error {

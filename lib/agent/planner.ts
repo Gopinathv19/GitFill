@@ -254,7 +254,7 @@ export const revisionPlanSchema = z.object({
         z.object({ op: z.literal("delete"), id: z.string() }),
         z.object({ op: z.literal("move"), id: z.string(), after: anchor }),
         z.object({ op: z.literal("set_theme"), theme: z.enum(THEMES) }),
-        z.object({ op: z.enum(["hide_commit", "show_commit"]) }),
+        z.object({ op: z.literal("set_labels"), labels: deckSpecSchema.shape.labels.unwrap() }),
       ]),
     )
     .min(1)
@@ -270,7 +270,7 @@ export type RevisionPlan = z.infer<typeof revisionPlanSchema>;
 export function applyRevision(spec: DeckSpec, plan: RevisionPlan): { spec: DeckSpec; changedIds: string[]; problems: string[] } {
   let slides = [...spec.slides];
   let theme = spec.theme;
-  let showCommit = spec.showCommit;
+  let labels = spec.labels;
   const changed = new Set<string>();
   const problems: string[] = [];
   const indexAfter = (after: string) => (after === "start" ? 0 : slides.findIndex((s) => s.id === after) + 1);
@@ -319,13 +319,12 @@ export function applyRevision(spec: DeckSpec, plan: RevisionPlan): { spec: DeckS
       case "set_theme":
         theme = op.theme;
         break;
-      case "hide_commit":
-      case "show_commit":
-        showCommit = op.op === "show_commit";
+      case "set_labels":
+        labels = op.labels;
         break;
     }
   }
-  return { spec: { ...spec, theme, showCommit, slides }, changedIds: [...changed], problems };
+  return { spec: { ...spec, theme, labels, slides }, changedIds: [...changed], problems };
 }
 
 /**
@@ -334,13 +333,13 @@ export function applyRevision(spec: DeckSpec, plan: RevisionPlan): { spec: DeckS
  * limit, so changed slides are composed one by one afterwards, like pages in planDeck.
  */
 /** Fields each revision operation needs; the model fills one flat object per operation. */
-const REQUIRED_FIELDS = { replace: ["id", "change"], insert: ["after", "layout", "title", "change"], delete: ["id"], move: ["id", "after"], set_theme: ["theme"], hide_commit: [], show_commit: [] } as const;
+const REQUIRED_FIELDS = { replace: ["id", "change"], insert: ["after", "layout", "title", "change"], delete: ["id"], move: ["id", "after"], set_theme: ["theme"], set_labels: ["labels"] } as const;
 
 // One flat object per operation with every key present (null when unused): Muse Wonder neither
 // follows anyOf branches nor optional keys reliably, but fills required keys as written.
 const revisionStepSchema = z
   .object({
-    op: z.enum(["replace", "insert", "delete", "move", "set_theme", "hide_commit", "show_commit"]),
+    op: z.enum(["replace", "insert", "delete", "move", "set_theme", "set_labels"]),
     id: z.string().nullable().describe("replace, delete, move: the slide id. Otherwise null."),
     after: z.string().nullable().describe('insert, move: the slide id to place it after, or "start". Otherwise null.'),
     layout: z.enum(["cover", "page"]).nullable().describe("insert: the new slide's layout. Otherwise null."),
@@ -348,6 +347,7 @@ const revisionStepSchema = z
     title: z.string().max(80).nullable().describe("insert: working title. replace: the new title when the request renames the slide, else null. Otherwise null."),
     change: z.string().max(800).nullable().describe("replace: exactly what to change and what to keep. insert: what the new slide must show, with the analysis items and claim refs to use. Otherwise null."),
     theme: z.enum(THEMES).nullable().describe("set_theme: the new theme. Otherwise null."),
+    labels: deckSpecSchema.shape.labels.unwrap().nullable().describe("set_labels: the complete new labels (header, footer, cover), starting from the current ones. Otherwise null."),
   })
   .superRefine((step, ctx) => {
     for (const field of REQUIRED_FIELDS[step.op]) {
@@ -423,7 +423,7 @@ export async function planRevision(opts: {
       if (op.op === "delete") return { op: "delete", id: op.id! };
       if (op.op === "move") return { op: "move", id: op.id!, after: op.after! };
       if (op.op === "set_theme") return { op: "set_theme", theme: op.theme! };
-      return { op: op.op };
+      return { op: "set_labels", labels: op.labels! };
     }),
   );
   return { summary: steps.summary, operations: operations.filter((o) => o !== null) };

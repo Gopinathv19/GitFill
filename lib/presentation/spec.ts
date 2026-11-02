@@ -329,8 +329,19 @@ export const deckSpecSchema = z.object({
   audience: text(120),
   purpose: text(240),
   theme: z.enum(THEMES).default("midnight"),
-  /** Whether the footer and cover show the commit SHA the deck was generated from. */
+  /** Legacy switch from before `labels`; only used to fill in default labels for older decks. */
   showCommit: z.boolean().default(true),
+  /**
+   * The words around the slides: page header, page footer and the cover's fact row. Filled from the
+   * repository facts when a deck is built, then edited like any other content.
+   */
+  labels: z
+    .object({
+      header: z.string().max(120).describe("Right side of every page header, e.g. 'owner/repo · main'. Empty hides it."),
+      footer: z.string().max(160).describe("Page footer text after the GitFill mark. Empty hides it."),
+      cover: z.array(z.object({ label: z.string().min(1).max(30), value: z.string().min(1).max(80) })).max(5).describe("The cover's fact row, in order."),
+    })
+    .optional(),
   slides: z.array(slideSchema).min(2).max(24),
 });
 

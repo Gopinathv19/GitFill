@@ -13,6 +13,7 @@ import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck } from "@/lib/presentation/build";
 import { deckSpecSchema } from "@/lib/presentation/spec";
 import { closeBrowser } from "@/lib/render/browser";
+import { withLabels } from "@/lib/presentation/labels";
 import { generateRequestSchema } from "@/lib/validation/request";
 
 /**
@@ -67,15 +68,10 @@ async function main() {
     await writeFile(path.join(out, "spec-planned.json"), JSON.stringify(spec, null, 2));
   }
   const t1 = Date.now();
+  const labeled = withLabels(spec, { repository: snapshot.displayName, branch: snapshot.branch, sha: snapshot.version });
   const built = await buildValidatedDeck({
-    spec,
-    repoLabel: `${snapshot.displayName} · ${snapshot.branch}`,
-    evidenceLabel: `${snapshot.displayName} @ ${snapshot.version.slice(0, 7)}`,
-    coverMeta: [
-      ["Repository", snapshot.displayName],
-      ["Commit", `${snapshot.branch} · ${snapshot.version.slice(0, 7)}`],
-      ["Audience", spec.audience],
-    ],
+    spec: labeled.spec,
+    ...labeled.render,
     workDir: out,
     illustrations: new Map(),
     evidence: deckEvidence({ snapshot, analysis: summary.analysis, claims }),
