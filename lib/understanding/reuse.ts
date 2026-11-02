@@ -3,7 +3,7 @@ import { modelFor } from "@/lib/ai/models";
 import { REUSE_COMPOSER_PROMPT, REUSE_EXPLORER_PROMPT } from "@/lib/ai/prompts";
 import { directorySummary, moduleGraph } from "@/lib/analysis/graph";
 import type { RunRecorder } from "@/lib/agent/recorder";
-import { createMultiRepositoryTools, createRepositoryContext, describeSnapshot, pruneUnknownRefs, type RepositoryContext } from "@/lib/agent/repo-tools";
+import { createMultiRepositoryTools, createRepositoryContext, describeCompressed, pruneUnknownRefs, type RepositoryContext } from "@/lib/agent/repo-tools";
 import { renderClaimsForPrompt } from "@/lib/agent/planner";
 import { defineTool, runToolLoop } from "@/lib/agent/tool-loop";
 import type { SourceSnapshot } from "@/lib/connectors/types";
@@ -21,7 +21,8 @@ export interface ReuseResult {
   agent: { turns: number; toolCalls: number };
 }
 
-const INLINE_BUDGET_EACH = 190_000;
+/** Full text per repository for small and key files; large files are digested once by the light reader. */
+const INLINE_BUDGET_EACH = 60_000;
 
 const KIND_LABEL: Record<ReuseKind, string> = {
   architectural: "architectural reuse (reproduce structural conventions and layering, not code)",
@@ -90,8 +91,12 @@ async function explore(opts: { client: MuseClient; request: string; reuseKinds: 
       run: async () => ({ accepted: true }),
     }),
   ];
-  const refText = describeSnapshot(ref, { inlineBudgetChars: INLINE_BUDGET_EACH, heading: "REFERENCE repository" }).text;
-  const tgtText = describeSnapshot(tgt, { inlineBudgetChars: INLINE_BUDGET_EACH, heading: "TARGET repository" }).text;
+  const [refText, tgtText] = (
+    await Promise.all([
+      describeCompressed(ref, { client: opts.client, recorder: opts.recorder, inlineBudgetChars: INLINE_BUDGET_EACH, heading: "REFERENCE repository" }),
+      describeCompressed(tgt, { client: opts.client, recorder: opts.recorder, inlineBudgetChars: INLINE_BUDGET_EACH, heading: "TARGET repository" }),
+    ])
+  ).map((d) => d.text);
   const user = [
     `User request: ${opts.request}`,
     `Requested reuse kinds: ${opts.reuseKinds.map((k) => KIND_LABEL[k]).join("; ")}.`,
@@ -113,6 +118,7 @@ async function explore(opts: { client: MuseClient; request: string; reuseKinds: 
     maxTurns: 14,
     maxToolCalls: 60,
     maxTokens: 12_000,
+    trimHistory: { keepTurns: 2, maxChars: 200_000 },
   });
   const known = new Set([...ref.claims, ...tgt.claims].map((c) => c.ref));
   return { notes: pruneUnknownRefs(result, known).value, turns, toolCalls };

@@ -5,7 +5,7 @@ import type { SourceSnapshot } from "@/lib/connectors/types";
 import type { Claim } from "@/lib/evidence/evidence";
 import { pruneAnalysisRefs, repositoryAnalysisSchema, type RepositoryAnalysis } from "./analysis-schema";
 import type { RunRecorder } from "./recorder";
-import { createRepositoryContext, createRepositoryTools, describeSnapshot, type RepositoryContext } from "./repo-tools";
+import { createRepositoryContext, createRepositoryTools, describeCompressed, type RepositoryContext } from "./repo-tools";
 import { defineTool, runToolLoop } from "./tool-loop";
 
 export interface AnalysisResult {
@@ -18,8 +18,11 @@ export interface AnalysisResult {
   context: RepositoryContext;
 }
 
-/** Prompt budget for file contents sent up front; anything beyond is reachable through read_file. */
-const INLINE_CONTEXT_CHARS = 420_000;
+/**
+ * Full text sent up front for small and key files; large files go in as digests written once by
+ * the light reader. Every turn re-sends this prefix, so it is the main cost of the loop.
+ */
+const INLINE_CONTEXT_CHARS = 110_000;
 
 /**
  * Repository analysis agent: reads the snapshot through real tools, records claims that
@@ -33,7 +36,7 @@ export async function analyzeRepository(opts: {
   /** Reuse a context (and its claims) built by an earlier step. */
   context?: RepositoryContext;
 }): Promise<AnalysisResult> {
-  const context = opts.context ?? createRepositoryContext(opts.snapshot, { refPrefix: "C", maxClaims: 90 });
+  const context = opts.context ?? createRepositoryContext(opts.snapshot, { refPrefix: "C", maxClaims: 110 });
   const tools = [
     ...createRepositoryTools(context),
     defineTool({
@@ -45,7 +48,7 @@ export async function analyzeRepository(opts: {
     }),
   ];
 
-  const described = describeSnapshot(context, { inlineBudgetChars: INLINE_CONTEXT_CHARS });
+  const described = await describeCompressed(context, { client: opts.client, recorder: opts.recorder, inlineBudgetChars: INLINE_CONTEXT_CHARS });
   const skipped = opts.snapshot.inventory
     .filter((i) => !i.selected)
     .slice(0, 300)
@@ -61,9 +64,12 @@ export async function analyzeRepository(opts: {
     messages: [{ role: "user", content: userContent }],
     tools,
     recorder: opts.recorder,
-    maxTurns: 10,
-    maxToolCalls: 40,
+    // Tracing workflows hop by hop needs more calls than a summary.
+    maxTurns: 14,
+    maxToolCalls: 64,
     maxTokens: 16_000,
+    // Old read results are trimmed once the conversation grows; their claims are already recorded.
+    trimHistory: { keepTurns: 2, maxChars: 200_000 },
   });
 
   const known = new Set(context.claims.map((c) => c.ref));

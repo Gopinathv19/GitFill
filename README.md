@@ -15,7 +15,7 @@ GitFill is a web app (GitHub repositories) and a VS Code extension (local code, 
 | **Commit-to-commit analysis** — any two commits, branches or tags | Web, VS Code (local refs) | Change summary, before/after structure, measured structural diff (moved/added/removed declarations, module dependencies, packages, routes, directories), impact on dependents, interfaces, tests and risks; hypotheses labelled as such |
 | **Architecture reuse** — "make repo B follow repo A's service/repository layering but keep B's models" | Web | Implementation brief: patterns with reference files, target state, comparison table, file-by-file plan, dependencies, constraints, do-not-modify list, acceptance criteria, tests. Exportable as Markdown or JSON for a coding agent |
 | **Documentation** | VS Code, Web | Doc comments with a diff preview (Apply/Reject), README drift detection with one-click fixes, README generation |
-| **Presentations** | Web | Handbook-style 16:9 decks (cards, tables, callouts, architecture/flow/sequence/state diagrams) as `.pptx` + PDF, rendered, measured, reviewed and repaired automatically |
+| **Presentations** — pitch, architecture review, onboarding, stakeholder update, tech talk or engineering walkthrough; GitFill reads the repo and asks you a few grounded questions first | Web, chat | 16:9 decks in one of 8 templates or your own brand (colours, logo, or a company `.pptx` template), with your screenshots and documents, as an **editable** `.pptx` (real text, shapes and diagrams) + PDF; rendered, measured, content-reviewed and repaired automatically |
 
 ## How it works
 
@@ -43,13 +43,17 @@ flowchart LR
 
 | Role | Model | Used for |
 | --- | --- | --- |
+| reader | `muse-spark-1.3`, reasoning `minimal` | Reads large files once and compresses them into digests with line ranges (cached by content); the tool loops work from these instead of raw files |
 | analyst, explainer, differ | `muse-spark-1.3` | Tool loops: exploration, questions, commit interpretation |
 | architect, planner | `muse-wonder-1.0` | Composing handbooks and briefs; deck outlines |
 | composer | `muse-spark-1.3` | Composing each deck page from the outline, in parallel |
-| writer, reviewer, repairer | `muse-spark-1.3` | README, doc comments, drift checks; slide review and repair |
+| writer, repairer | `muse-spark-1.3` | README, doc comments, drift checks; slide repair |
+| reviewer, describer | `muse-spark-1.3`, reasoning `minimal` | Slide and video-frame review; describing uploaded images |
 | illustrator | `muse-image-1.0` | Deck artwork |
 
-`MUSE_USE_CONTRIBUTOR=true` routes the loop-heavy roles to `-contributor` models (Meta may train on those inputs; public repos only).
+`MUSE_USE_CONTRIBUTOR=true` routes the loop-heavy roles to `-contributor` models (Meta may train on those inputs; public repos only). `MUSE_MODEL_<ROLE>` and `MUSE_EFFORT_<ROLE>` (e.g. `MUSE_MODEL_READER=muse-spark-1.2`, `MUSE_EFFORT_REVIEWER=low`) override one role without a code change.
+
+Measured on the Meta Model API: `muse-spark-1.1` and `1.2` are earlier generations, not lighter models: they compressed files 2.5-9x slower with 3-14x more output tokens and scored clean slides 3-6/10 with many false findings, where `muse-spark-1.3` at minimal reasoning scored them 8. Most of the cost was never the model choice but input size: the analysis and exploration loops re-sent ~130k tokens of raw files on every turn (92% of all input tokens). With digests, analysing `memora` (162 files) took 0.92M input tokens instead of 1.5-2.4M (0.71M on later jobs, when digests are cached) and recorded 88 claims instead of 72-80. `scripts/bench-models.ts` and `scripts/bench-analysis.ts` repeat the measurements.
 
 ## Setup
 
@@ -88,6 +92,7 @@ Run **GitFill: Sign in**, paste the server URL and token. See [extension/README.
 | `MODEL_API_KEY` | yes | Meta Model API key |
 | `MODEL_API_BASE_URL` | no | Defaults to `https://api.meta.ai/v1` |
 | `MUSE_USE_CONTRIBUTOR` | no | `true` to use contributor-tier models (development only) |
+| `MUSE_MODEL_<ROLE>`, `MUSE_EFFORT_<ROLE>` | no | Model or reasoning effort for one role (`READER`, `REVIEWER`, `ANALYST`, …), e.g. `MUSE_MODEL_READER=muse-spark-1.2` |
 | `MEMORA_BASE_URL`, `MEMORA_API_TOKEN` | no | Memora retrieval service and application credential |
 | `MEMORA_INDEX_TIMEOUT_MS` | no | How long jobs wait for a fresh index (default 150000) |
 | `GITHUB_TOKEN` | no | Fallback for users without a connected GitHub account: public repos at 5,000 requests/hour |
@@ -112,6 +117,7 @@ Run **GitFill: Sign in**, paste the server URL and token. See [extension/README.
 | `npm test` | Unit tests (analysis, Mermaid, structural diff, connectors, Memora bundling, rendering) |
 | `npm run typecheck` / `npm run lint` | Type and lint checks |
 | `npm run muse:check` | Live check of every Muse capability GitFill uses |
+| `npx tsx scripts/native-preview.ts [dir] [template…]` | Renders the sample deck per template as an editable `.pptx`, plus pictures of what PowerPoint will draw |
 
 ## API
 
@@ -128,7 +134,10 @@ Responses use `{ "data": ... }` or `{ "error": { "code", "message" } }`. Browser
 | `POST` | `/api/workspaces/:id/handbook` | Queue a handbook: `repositoryId`, `audience`, `scope`, `focus`, `instructions` |
 | `POST` | `/api/workspaces/:id/compare` | Queue a commit comparison: `repositoryId`, `base`, `head`, `focus` |
 | `POST` | `/api/workspaces/:id/reuse` | Queue an implementation brief: `referenceRepositoryId`, `targetRepositoryId`, `request`, `reuseKinds[]` |
-| `POST` | `/api/workspaces/:id/generate` | Queue a presentation |
+| `POST` | `/api/workspaces/:id/generate` | Queue a presentation: `repositoryId`, `deckType`, `audience`, `minutes` or `slideCount`, `theme` (template), `brand`, `assetIds[]`, `mustCover[]`, `avoid[]`, `answers`, `instructions`, `outputs{pdf,readme,illustrations,pptx:"native"\|"image"}` |
+| `POST` | `/api/workspaces/:id/presentation-questions` | GitFill scouts the repository and returns 2-4 grounded questions to ask before a deck |
+| `GET`/`POST` | `/api/workspaces/:id/uploads` | List or add files (multipart `file`, `purpose`: material \| template \| logo, optional `caption`) |
+| `GET`/`PATCH`/`DELETE` | `/api/uploads/:id` | An upload's bytes, its caption, or remove it |
 | `GET` | `/api/documents?workspaceId=&kind=` | Documents (handbook, commit_report, implementation_brief, explanation) |
 | `GET`/`DELETE` | `/api/documents/:id` | Document with Markdown, structured spec, snapshots and verified claims |
 | `GET` | `/api/documents/:id/download?format=md\|json` | Download the Markdown, or the structured spec for tooling |
@@ -142,7 +151,7 @@ Responses use `{ "data": ... }` or `{ "error": { "code", "message" } }`. Browser
 | `POST` | `/api/ext/document` | Doc comments for a file or selection, with a full-file preview |
 | `POST` | `/api/ext/changes` | Explain a git diff (working tree, staged, or a commit range) with current file contents |
 | `POST` | `/api/ext/drift` | README statements a diff makes outdated, with proposed edits |
-| `GET`/`POST` | `/api/presentations`, `/api/presentations/:id/*` | Decks, revisions and downloads |
+| `GET`/`POST` | `/api/presentations`, `/api/presentations/:id/*` | Decks, revisions (`instruction`, or `theme` to switch template without regenerating) and downloads |
 | `GET` | `/api/health` | Database, model, Memora and worker status |
 
 ## Evaluating output quality

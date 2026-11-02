@@ -4,8 +4,8 @@ import { formatAnswers, formatQuestions, parseQuestions, type AskUser } from "@/
 const ask: AskUser = {
   intro: "Pingie has a widget, a dashboard, an admin console and a docs site.",
   questions: [
-    { question: "Who reads it?", options: [{ label: "Hackathon judges" }, { label: "New engineers", detail: "ping-backend/tests" }], multiple: false },
-    { question: "What to feature?", options: [{ label: "Nebius and NVIDIA" }, { label: "Memora" }], multiple: true },
+    { question: "Who reads it?", options: [{ label: "Hackathon judges" }, { label: "New engineers", detail: "ping-backend/tests" }], multiple: false, kind: "choice" },
+    { question: "What to feature?", options: [{ label: "Nebius and NVIDIA" }, { label: "Memora" }], multiple: true, kind: "choice" },
   ],
 };
 

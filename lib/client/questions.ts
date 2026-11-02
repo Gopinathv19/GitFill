@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatAttachments, type Attachment } from "./attachments";
 
 /**
  * Questions the chat agent writes for the user before a handbook or presentation. They are stored
@@ -17,6 +18,10 @@ export const askUserSchema = z.object({
           .min(2)
           .max(4),
         multiple: z.boolean().default(false).describe("True when several options can apply together."),
+        kind: z
+          .enum(["choice", "template", "upload"])
+          .default("choice")
+          .describe('choice = pick options; template = the user picks a deck template from the gallery (options: template ids); upload = ask the user for screenshots, a logo or documents (options: what kinds of files would help).'),
       }),
     )
     .min(1)
@@ -47,13 +52,19 @@ export function parseQuestions(content: string): { text: string; ask: AskUser | 
   return { text: content.replace(match[0], "").trim(), ask: parsed.data };
 }
 
-/** The user's answers as a chat message: one line per question, chosen options plus their own words. */
-export function formatAnswers(ask: AskUser, answers: Array<{ chosen: string[]; other: string }>): string {
-  return ask.questions
+/**
+ * The user's answers as a chat message: one line per question, chosen options plus their own words.
+ * Uploads answered in the card are listed by id so the agent can pass them to the job.
+ */
+export function formatAnswers(ask: AskUser, answers: Array<{ chosen: string[]; other: string; uploads?: Attachment[] }>): string {
+  const files: Attachment[] = [];
+  const lines = ask.questions
     .map((q, i) => {
       const a = answers[i] ?? { chosen: [], other: "" };
-      const parts = [...a.chosen, a.other.trim()].filter(Boolean);
+      files.push(...(a.uploads ?? []));
+      const parts = [...a.chosen, a.other.trim(), ...(a.uploads ?? []).map((u) => `uploaded ${u.filename}`)].filter(Boolean);
       return `${i + 1}. ${q.question} — ${parts.length ? parts.join("; ") : "no preference, use your judgment"}`;
     })
     .join("\n");
+  return lines + formatAttachments(files);
 }

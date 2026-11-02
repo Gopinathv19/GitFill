@@ -2,17 +2,24 @@
 
 import { useState } from "react";
 import { Check } from "lucide-react";
+import { TemplateGallery } from "@/components/presentation/template-gallery";
+import { UploadZone } from "@/components/shared/upload-zone";
 import { Button } from "@/components/ui/button";
 import { formatAnswers, type AskUser } from "@/lib/client/questions";
+import { toAttachment, type UploadView } from "@/lib/client/uploads";
+import { isTemplateId, TEMPLATES, type TemplateId } from "@/lib/presentation/themes";
 import { cn } from "@/lib/utils";
 
 /**
  * Questions the agent wrote after scouting the code. Each takes chosen options and/or the user's own
- * words; submitting sends the answers as the next chat message. Read-only once the chat has moved on.
+ * words; a "template" question shows the template gallery and an "upload" question an upload box
+ * (needs `workspaceId`). Submitting sends the answers as the next chat message. Read-only once the
+ * chat has moved on.
  */
-export function QuestionCard({ ask, onAnswer }: { ask: AskUser; onAnswer?: (text: string) => void }) {
-  const [answers, setAnswers] = useState(() => ask.questions.map(() => ({ chosen: [] as string[], other: "" })));
+export function QuestionCard({ ask, onAnswer, workspaceId }: { ask: AskUser; onAnswer?: (text: string) => void; workspaceId?: string }) {
+  const [answers, setAnswers] = useState(() => ask.questions.map(() => ({ chosen: [] as string[], other: "", uploads: [] as UploadView[] })));
   const disabled = !onAnswer;
+  const setTemplate = (qi: number, id: TemplateId) => setAnswers((all) => all.map((a, i) => (i === qi ? { ...a, chosen: [`${TEMPLATES[id].name} template (${id})`] } : a)));
 
   const toggle = (qi: number, label: string, multiple: boolean) =>
     setAnswers((all) =>
@@ -32,8 +39,20 @@ export function QuestionCard({ ask, onAnswer }: { ask: AskUser; onAnswer?: (text
               <p className="font-medium">{q.question}</p>
               {q.why ? <p className="mt-0.5 text-xs text-muted-foreground">{q.why}</p> : null}
             </div>
+            {q.kind === "template" && !disabled ? (
+              <TemplateGallery
+                compact
+                value={(answers[qi]!.chosen[0]?.match(/\((\w+)\)$/)?.[1] ?? "") as TemplateId}
+                suggested={q.options.map((o) => o.label.trim().toLowerCase()).find(isTemplateId)}
+                onChange={(id) => setTemplate(qi, id)}
+              />
+            ) : null}
+            {q.kind === "upload" && !disabled && workspaceId ? (
+              <UploadZone compact workspaceId={workspaceId} uploads={answers[qi]!.uploads} onChange={(uploads) => setAnswers((all) => all.map((a, i) => (i === qi ? { ...a, uploads } : a)))} hint={q.options.map((o) => o.label).join(" · ") || undefined} />
+            ) : null}
             <div className="flex flex-col gap-1.5">
-              {q.options.map((o) => {
+              {/* The gallery and the upload box replace the option buttons; the free-text answer stays. */}
+              {(q.kind === "template" && !disabled) || (q.kind === "upload" && !disabled && workspaceId) ? null : q.options.map((o) => {
                 const on = answers[qi]!.chosen.includes(o.label);
                 return (
                   <button
@@ -75,7 +94,7 @@ export function QuestionCard({ ask, onAnswer }: { ask: AskUser; onAnswer?: (text
           <Button size="sm" variant="ghost" onClick={() => onAnswer("No preferences. Use your judgment and go ahead.")}>
             Use your judgment
           </Button>
-          <Button size="sm" onClick={() => onAnswer(formatAnswers(ask, answers))}>
+          <Button size="sm" onClick={() => onAnswer(formatAnswers(ask, answers.map((a) => ({ ...a, uploads: a.uploads.map(toAttachment) }))))}>
             Send answers
           </Button>
         </div>

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import type { MuseClient } from "@/lib/ai/client";
-import { modelFor } from "@/lib/ai/models";
+import { effortFor, modelFor } from "@/lib/ai/models";
 import { VISUAL_REVIEW_PROMPT } from "@/lib/ai/prompts";
 import type { Slide } from "@/lib/presentation/spec";
 import type { RenderedSlide } from "@/lib/render/browser";
@@ -56,8 +56,8 @@ export async function reviewSlidesVisually(opts: {
           purpose: `visual_review:${slide.id}`,
           schema: visualReviewSchema,
           schemaName: "SlideVisualReview",
-          // Low effort keeps review fast; hidden reasoning also counts against max_tokens.
-          reasoningEffort: "low",
+          // Minimal effort: measured 3-4x faster than low with fewer false findings; hidden reasoning also counts against max_tokens.
+          reasoningEffort: effortFor("reviewer"),
           maxTokens: 6000,
           messages: [
             { role: "system", content: VISUAL_REVIEW_PROMPT },

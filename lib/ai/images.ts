@@ -1,4 +1,5 @@
 import { env, requireEnv } from "@/lib/config/env";
+import { getTheme } from "@/lib/presentation/themes";
 import { modelFor } from "./models";
 import { ModelError, type ModelCallObserver } from "./client";
 
@@ -9,9 +10,10 @@ const ART_DIRECTION =
  * Generates decorative artwork with Muse Image. Diagrams are never generated as images:
  * they stay native, editable shapes. Returns PNG bytes.
  */
-export async function generateIllustration(prompt: string, observer?: ModelCallObserver, theme: "midnight" | "daylight" = "midnight"): Promise<Buffer> {
+export async function generateIllustration(prompt: string, observer?: ModelCallObserver, theme: string = "midnight"): Promise<Buffer> {
   const model = modelFor("illustrator");
-  const direction = theme === "daylight" ? ART_DIRECTION.replace("Dark navy background", "Very light, airy background") : ART_DIRECTION;
+  const look = getTheme(theme);
+  const direction = (look.template.palette.mode === "light" ? ART_DIRECTION.replace("Dark navy background", "Very light, airy background") : ART_DIRECTION) + ` Accent colour ${look.tokens["--accent"]}.`;
   const started = Date.now();
   try {
     const res = await fetch(`${env().MODEL_API_BASE_URL}/images/generations`, {

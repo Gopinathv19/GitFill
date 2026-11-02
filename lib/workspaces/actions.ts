@@ -19,6 +19,7 @@ import {
   type BrainstormRequest,
   type GenerateRequest,
   type ReadmeRequest,
+  type ReviseRequest,
   type VideoRequest,
 } from "@/lib/validation/request";
 import { assertDeckAccess, assertDocumentAccess, getRepository } from "./service";
@@ -47,7 +48,7 @@ export async function startPresentation(db: Database, userId: string, workspaceI
 }
 
 /** Queues a revision for a deck the user owns, refusing if one is already running. */
-export async function revisePresentation(db: Database, userId: string, deckId: string, instruction: string) {
+export async function revisePresentation(db: Database, userId: string, deckId: string, instruction: string, opts: Omit<ReviseRequest, "instruction"> = {}) {
   const { deck } = await assertDeckAccess(db, userId, deckId);
   const busy = await db
     .select({ id: generationJobs.id })
@@ -55,7 +56,7 @@ export async function revisePresentation(db: Database, userId: string, deckId: s
     .where(and(eq(generationJobs.deckId, deckId), inArray(generationJobs.status, ["pending", ...ACTIVE_STATUSES])));
   if (busy.length) throw new ActionError("A revision is already running for this presentation.");
   const snap = (await db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)))[0]!;
-  const job = await enqueueRevision(db, deck, snap.repositoryUrl, instruction);
+  const job = await enqueueRevision(db, deck, snap.repositoryUrl, { instruction, ...opts });
   kickInlineWorker(db);
   return { job, deck };
 }

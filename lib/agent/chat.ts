@@ -4,7 +4,9 @@ import { modelFor } from "@/lib/ai/models";
 import { suffixFootnotes } from "@/lib/client/answer-parts";
 import { env } from "@/lib/config/env";
 import type { Database } from "@/lib/db";
+import { DECK_TYPES, DECK_TYPE_DEFS } from "@/lib/presentation/deck-types";
 import { THEMES } from "@/lib/presentation/spec";
+import { describeTemplates } from "@/lib/presentation/themes";
 import { HANDBOOK_AUDIENCES, REUSE_KINDS } from "@/lib/understanding/schemas";
 import { ActionError, askRepository, openPullRequest, openWorkspaceRepository, revisePresentation, startBrainstorm, startReadme, startVideo, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
 import { getWorkspace, listMessages } from "@/lib/workspaces/service";
@@ -42,6 +44,14 @@ A document is only as good as its fit to the reader, and most of that cannot be 
 2. Work out which decisions about the document the request and the code leave open, and ask about those, and only those, with ask_user. Write the questions yourself for this repository; ground every option in something you found (name the real modules, features, services). 1-4 questions, one round. Add a short intro saying what you found.
 3. When the user answers (or says to just go ahead), write the brief and start the job. The brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
 Skip asking when the user has already given that intent, says "just go" / "use your judgment", or is asking for a revision. Never ask the same thing twice.
+
+Presentations
+- Decide the deck type from the request (${DECK_TYPES.map((t) => `${t}: ${DECK_TYPE_DEFS[t].label}`).join("; ")}); ask only when the request leaves it open.
+- Unless the user already chose a look, include one question with kind "template" so they pick from the template gallery; its options are template ids, the one that suits the deck type first. Templates:
+${describeTemplates()}
+- Unless the user already attached files, include one question with kind "upload" offering to take screenshots, a logo, a .pptx template (its colours and fonts become the deck's brand) or documents (product notes, results, roadmap); options name what would help this deck (e.g. "Screenshots of the dashboard").
+- Files the user attached appear in their messages as an \`attachments\` block with upload ids. Pass the ids of images and documents to use as asset_ids; a template's id too (its brand is applied).
+- Put must-cover topics and things to skip from the answers into must_cover and avoid, and everything else they told you into brief.
 
 Brainstorming
 When the user wants to think through a feature or change for a repository, be a sharp engineering partner: look at the relevant code first (list_files, grep, read_file), then discuss options and trade-offs grounded in what the code does today, ask focused questions one round at a time, and keep track of what has been decided. Do not write code. When they are happy with the idea, or ask to save or hand it off, call save_brainstorm with a short title; the spec is written from this conversation, so summarise the decisions in your last reply before saving if they are scattered.
@@ -139,7 +149,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     ...scoutTools,
     defineTool({
       name: "ask_user",
-      description: "Ask the user 1-4 questions you wrote, each with 2-4 options grounded in what you found in the code. The user can also answer in their own words. Ends your turn.",
+      description: "Ask the user 1-4 questions you wrote, each with 2-4 options grounded in what you found in the code (kind \"template\" shows the template gallery, kind \"upload\" an upload box). The user can also answer in their own words. Ends your turn.",
       input: askUserSchema,
       terminal: true,
       run: async () => ({ shown: true }),
@@ -211,16 +221,37 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
       description: "Start analyzing a repository and generating a presentation. Returns a job id.",
       input: z.object({
         repository_id: z.string().uuid(),
+        deck_type: z.enum(DECK_TYPES).optional(),
         audience: z.string().max(120).optional(),
         purpose: z.string().max(240).optional(),
-        slide_count: z.number().int().min(4).max(16).optional(),
-        theme: z.enum(THEMES).optional(),
+        slide_count: z.number().int().min(4).max(20).optional(),
+        minutes: z.number().int().min(1).max(90).optional().describe("Talk length, when the user gave one; sets the slide count."),
+        theme: z.enum(THEMES).optional().describe("Template id the user picked."),
+        brand_accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("Brand colour the user named, as #rrggbb."),
+        logo_asset_id: z.string().uuid().optional().describe("Upload id of a logo image."),
+        asset_ids: z.array(z.string().uuid()).max(30).optional().describe("Upload ids of screenshots, documents and templates to use."),
+        must_cover: z.array(z.string().min(1).max(200)).max(12).optional(),
+        avoid: z.array(z.string().min(1).max(200)).max(12).optional(),
         instructions: z.string().max(2000).optional(),
         brief: BRIEF,
       }),
       run: async (i) =>
         act(async () => {
-          const { job, repo } = await startPresentation(db, userId, workspaceId, i.repository_id, { audience: i.audience, purpose: i.purpose, slideCount: i.slide_count, theme: i.theme, instructions: i.instructions, brief: i.brief });
+          const brand = i.brand_accent || i.logo_asset_id ? { ...(i.brand_accent ? { accent: i.brand_accent } : {}), ...(i.logo_asset_id ? { logoAssetId: i.logo_asset_id } : {}) } : undefined;
+          const { job, repo } = await startPresentation(db, userId, workspaceId, i.repository_id, {
+            deckType: i.deck_type,
+            audience: i.audience,
+            purpose: i.purpose,
+            slideCount: i.slide_count,
+            minutes: i.minutes,
+            theme: i.theme,
+            brand,
+            assetIds: i.asset_ids,
+            mustCover: i.must_cover,
+            avoid: i.avoid,
+            instructions: i.instructions,
+            brief: i.brief,
+          });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not start the presentation."),

@@ -54,7 +54,20 @@ export interface FigureCounter {
   n: number;
 }
 
-export function renderBlock(b: Block, width: number, figs: FigureCounter): string {
+/** Uploaded images as data URIs keyed by asset id. */
+export type ImageMap = ReadonlyMap<string, string>;
+
+const windowBar = (title = "") => `<div class="w-bar"><i></i><i></i><i></i>${title ? `<span>${esc(title)}</span>` : ""}</div>`;
+
+/** A screenshot or picture in its frame. The image keeps its aspect ratio inside the box. */
+function shot(src: string | undefined, frame: "browser" | "device" | "plain", fit: "contain" | "cover", alt: string): string {
+  const img = src ? `<img src="${src}" alt="${esc(alt)}" style="object-fit:${fit}"/>` : `<div class="shot-missing">Image not available</div>`;
+  if (frame === "browser") return `<div class="shot frame-browser">${windowBar()}<div class="shot-img">${img}</div></div>`;
+  if (frame === "device") return `<div class="shot frame-device"><div class="shot-img">${img}</div></div>`;
+  return `<div class="shot frame-plain"><div class="shot-img">${img}</div></div>`;
+}
+
+export function renderBlock(b: Block, width: number, figs: FigureCounter, images?: ImageMap): string {
   switch (b.type) {
     case "cards": {
       const cols = fitColumns(b.columns, b.items.length, width, 170);
@@ -73,7 +86,7 @@ export function renderBlock(b: Block, width: number, figs: FigureCounter): strin
     case "steps": {
       const vertical = b.direction === "vertical" || width / b.items.length < 150;
       const steps = `<div class="steps ${vertical ? "v" : "h"}">${b.items
-        .map((s, i) => `<div class="step"><span class="sn">${String(i + 1).padStart(2, "0")}</span><div><h3>${inline(s.title)}</h3><p>${inline(s.text)}</p></div></div>`)
+        .map((s, i) => `<div class="step">${!vertical && i < b.items.length - 1 ? `<i class="conn"></i>` : ""}<span class="sn">${String(i + 1).padStart(2, "0")}</span><div><h3>${inline(s.title)}</h3><p>${inline(s.text)}</p></div></div>`)
         .join("")}</div>`;
       return b.title ? panel(b.title, steps) : steps;
     }
@@ -94,12 +107,12 @@ export function renderBlock(b: Block, width: number, figs: FigureCounter): strin
     case "list":
       return panel(
         b.title,
-        `<ul class="bullets">${b.items.map((i) => `<li><span>${inline(i.text)}</span>${status(i.status)}</li>`).join("")}</ul>`,
+        `<ul class="bullets">${b.items.map((i) => `<li><i class="bul"></i><span>${inline(i.text)}</span>${status(i.status)}</li>`).join("")}</ul>`,
         b.hint,
       );
     case "callout": {
       const label = b.label ?? (b.tone === "limit" ? "Limits" : b.tone === "note" ? "Note" : "Key takeaway");
-      return `<div class="takeaway ${b.tone === "takeaway" ? "" : b.tone}"><div><span class="label">${inline(label)}</span><p>${inline(b.text)}</p></div></div>`;
+      return `<div class="takeaway ${b.tone === "takeaway" ? "" : b.tone}"><i class="bar"></i><div><span class="label">${inline(label)}</span><p>${inline(b.text)}</p></div></div>`;
     }
     case "explain": {
       const cells = [
@@ -122,7 +135,7 @@ export function renderBlock(b: Block, width: number, figs: FigureCounter): strin
         .join("")}</div>`;
     }
     case "code":
-      return `<div class="codebox"><div class="w-bar"><i></i><i></i><i></i><span>${esc(b.title)}</span></div><pre>${b.lines.map(esc).join("\n")}</pre>${b.caption ? `<div class="cap">${inline(b.caption)}</div>` : ""}</div>`;
+      return `<div class="codebox">${windowBar(b.title)}<pre>${b.lines.map(esc).join("\n")}</pre>${b.caption ? `<div class="cap">${inline(b.caption)}</div>` : ""}</div>`;
     case "flashcards": {
       const cols = fitColumns(4, b.items.length, width, 230);
       return `<div class="grid g${cols}" style="grid-auto-rows:1fr">${b.items
@@ -139,20 +152,32 @@ export function renderBlock(b: Block, width: number, figs: FigureCounter): strin
       figs.n += 1;
       return `<div class="figure"><div class="fig-h"><span class="fig-n">FIG ${String(figs.n).padStart(2, "0")}</span><h2>${inline(b.title)}</h2>${b.hint ? `<span class="hint">${inline(b.hint)}</span>` : ""}</div><div class="canvas">${renderFigure(b.figure, width)}</div></div>`;
     }
+    case "image": {
+      const head = b.title ? `<div class="fig-h"><h2>${inline(b.title)}</h2></div>` : "";
+      return `<div class="figure image">${head}${shot(images?.get(b.assetId), b.frame, b.fit, b.caption ?? b.title ?? "")}${b.caption ? `<p class="caption">${inline(b.caption)}</p>` : ""}</div>`;
+    }
   }
 }
 
-export function renderCoverVisual(v: CoverSlide["visual"], art: string | undefined): string {
+export function renderCoverVisual(v: CoverSlide["visual"], art: string | undefined, images?: ImageMap): string {
   switch (v.type) {
     case "terminal":
-      return `<div class="window"><div class="w-bar"><i></i><i></i><i></i><span>${esc(v.title)}</span></div><div class="term">${v.lines
-        // The prompt glyphs come from CSS; drop any the model typed itself.
-        .map((l) => `<div class="ln ${l.kind}">${esc(l.kind === "command" ? l.text.replace(/^\s*\$\s*/, "") : l.kind === "comment" ? l.text.replace(/^\s*#+\s*/, "") : l.text)}</div>`)
+      return `<div class="window">${windowBar(v.title)}<div class="term">${v.lines
+        // The prompt glyphs are added here; drop any the model typed itself.
+        .map((l) =>
+          l.kind === "command"
+            ? `<div class="ln command"><span class="pr">$ </span>${esc(l.text.replace(/^\s*\$\s*/, ""))}</div>`
+            : l.kind === "comment"
+              ? `<div class="ln comment"># ${esc(l.text.replace(/^\s*#+\s*/, ""))}</div>`
+              : `<div class="ln output">${esc(l.text)}</div>`,
+        )
         .join("")}</div></div>`;
     case "tree":
-      return `<div class="window"><div class="w-bar"><i></i><i></i><i></i><span>${esc(v.title)}</span></div><div class="tree">${v.items
-        .map((i) => `<div class="row"><span class="p">${esc(i.path)}</span>${i.note ? `<span class="n">${inline(i.note)}</span>` : ""}</div>`)
+      return `<div class="window">${windowBar(v.title)}<div class="tree">${v.items
+        .map((i) => `<div class="row"><span class="p"><span class="pr">▸ </span>${esc(i.path)}</span>${i.note ? `<span class="n">${inline(i.note)}</span>` : ""}</div>`)
         .join("")}</div></div>`;
+    case "image":
+      return `<div class="cover-shot">${shot(images?.get(v.assetId), "browser", "cover", v.caption ?? "")}${v.caption ? `<p class="caption">${inline(v.caption)}</p>` : ""}</div>`;
     case "stats":
       return `<div class="cover-stats">${v.items
         .map((s) => `<div class="stat"><span class="k">${inline(s.label)}</span><span class="v">${esc(s.value)}${s.unit ? `<small>${esc(s.unit)}</small>` : ""}</span></div>`)

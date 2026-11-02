@@ -52,7 +52,8 @@ export async function explainWithSearch(opts: {
     recorder: opts.recorder,
     maxTurns: 10,
     maxToolCalls: 30,
-    maxTokens: 8_000,
+    // Room for a full walkthrough (up to ~1500 words) plus hidden reasoning.
+    maxTokens: 14_000,
     reasoningEffort: "low",
     finishOnText: true,
     streamText: true,

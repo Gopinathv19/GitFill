@@ -3,7 +3,7 @@ import type { MuseClient } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
 import { BRAINSTORM_SPEC_PROMPT } from "@/lib/ai/prompts";
 import type { RunRecorder } from "@/lib/agent/recorder";
-import { createRepositoryContext, createRepositoryTools, describeSnapshot, pruneUnknownRefs } from "@/lib/agent/repo-tools";
+import { createRepositoryContext, createRepositoryTools, describeCompressed, pruneUnknownRefs } from "@/lib/agent/repo-tools";
 import { defineTool, runToolLoop } from "@/lib/agent/tool-loop";
 import type { SourceSnapshot } from "@/lib/connectors/types";
 import type { Claim } from "@/lib/evidence/evidence";
@@ -48,7 +48,7 @@ export async function writeBrainstormSpec(opts: { client: MuseClient; snapshot: 
       run: async () => ({ accepted: true }),
     }),
   ];
-  const described = describeSnapshot(context, { inlineBudgetChars: 200_000 });
+  const described = await describeCompressed(context, { client: opts.client, recorder: opts.recorder, inlineBudgetChars: 70_000 });
   const { result } = await runToolLoop<BrainstormSpec>({
     client: opts.client,
     model: modelFor("analyst"),

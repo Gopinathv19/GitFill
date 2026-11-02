@@ -23,7 +23,7 @@ export interface ExplanationResult {
 
 /** Smaller inline budget than batch jobs: questions are interactive. */
 const INLINE_BUDGET = 160_000;
-const MAX_CITATIONS = 40;
+const MAX_CITATIONS = 60;
 const MAX_SOURCES = 10;
 
 /**
@@ -85,7 +85,8 @@ export async function explainCode(opts: {
     recorder: opts.recorder,
     maxTurns: 8,
     maxToolCalls: 24,
-    maxTokens: 8_000,
+    // Room for a full walkthrough (up to ~1500 words) plus hidden reasoning.
+    maxTokens: 14_000,
     // Default effort spends ~2-3k hidden tokens per answer; low keeps quality with roughly half the latency.
     reasoningEffort: "low",
     finishOnText: true,
@@ -198,10 +199,15 @@ function validateReferences(spec: ExplanationSpec, files: ReadonlyMap<string, So
   return { ...spec, references };
 }
 
-/** `citationRefs` maps each inline `path:lines` citation in the answer to its claim (see verifyCitations). */
+/**
+ * `citationRefs` maps each inline `path:lines` citation in the answer to its claim (see verifyCitations).
+ * In the prose a citation becomes only its footnote marker (a numbered evidence chip in the chat), so the
+ * answer reads as an explanation rather than a list of paths; the file and lines are in the footnote.
+ */
 export function renderExplanation(spec: ExplanationSpec, snapshot: AnswerMeta, claims: Claim[], citationRefs: Array<string | null>): string {
   const ctx = makeRenderContext([{ snapshot, claims }]);
-  const answer = replaceCitations(spec.answer.trim(), citationRefs, (ref, citation) => `${location(citation, ctx)}${cite([ref], ctx)}`);
+  // Citations that could not be checked (unknown file, over the cap) are dropped from the prose.
+  const answer = tidyProse(replaceCitations(spec.answer.trim(), citationRefs, (ref) => cite([ref], ctx), { dropUnresolved: true }));
   const out: string[] = [`### ${spec.title}`, "", answer, ""];
   const diagram = diagramBlock(spec.diagram, ctx);
   if (diagram) out.push(diagram, "");
@@ -214,4 +220,15 @@ export function renderExplanation(spec: ExplanationSpec, snapshot: AnswerMeta, c
   if (notes) out.push(notes, "");
   out.push(footer("Explanation", [snapshot], claims));
   return out.join("\n");
+}
+
+/**
+ * Outside code fences only: attaches evidence markers to the word before them and removes the space a
+ * dropped citation leaves before punctuation.
+ */
+export function tidyProse(markdown: string): string {
+  return markdown
+    .split(/(```[\s\S]*?```)/)
+    .map((part, i) => (i % 2 ? part : part.replace(/[ \t]+(\[\^)/g, "$1").replace(/[ \t]+([.,;:)])/g, "$1")))
+    .join("");
 }

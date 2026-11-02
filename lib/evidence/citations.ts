@@ -120,11 +120,17 @@ export function verifyCitations(body: string, files: ReadonlyMap<string, SourceF
 }
 
 /** Replaces the n-th citation with `render(ref, original)`, or leaves it when its ref is null. */
-export function replaceCitations(body: string, refs: Array<string | null>, render: (ref: string, citation: string) => string): string {
+/**
+ * Replaces each `path:lines` citation with `render(ref, citation)`. A citation without a claim is
+ * kept as written, or, when `dropUnresolved` is set and it looks like a file path (over the cap, or a
+ * file that does not exist), removed; code-like text such as `localhost:3000` is always kept.
+ */
+export function replaceCitations(body: string, refs: Array<string | null>, render: (ref: string, citation: string) => string, opts: { dropUnresolved?: boolean } = {}): string {
   let i = 0;
-  return body.replace(citationPattern(), (whole: string) => {
+  return body.replace(citationPattern(), (whole: string, path: string) => {
     const ref = refs[i++];
-    return ref ? render(ref, whole.slice(1, -1)) : whole;
+    if (ref) return render(ref, whole.slice(1, -1));
+    return opts.dropUnresolved && looksLikePath(normalizePath(path)) ? "" : whole;
   });
 }
 

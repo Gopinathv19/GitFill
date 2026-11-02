@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { MuseClient } from "@/lib/ai/client";
-import { modelFor } from "@/lib/ai/models";
+import { effortFor, modelFor } from "@/lib/ai/models";
 import { VIDEO_FRAME_REVIEW_PROMPT } from "@/lib/ai/prompts";
 import type { RunRecorder } from "@/lib/agent/recorder";
 import { visualReviewSchema, type VisualReview } from "@/lib/validation/visual-review";
@@ -15,7 +15,7 @@ export async function reviewFrame(opts: { client: MuseClient; recorder: RunRecor
       purpose: `review_frame:${opts.label}`,
       schema: visualReviewSchema,
       schemaName: "FrameReview",
-      reasoningEffort: "low",
+      reasoningEffort: effortFor("reviewer"),
       maxTokens: 6000,
       messages: [
         { role: "system", content: VIDEO_FRAME_REVIEW_PROMPT },

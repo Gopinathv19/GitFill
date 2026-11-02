@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { env } from "@/lib/config/env";
 
@@ -25,6 +25,8 @@ export interface ArtifactStorage {
   exists(key: string): Promise<boolean>;
   /** Absolute local path for tools (Chromium, PptxGenJS) that need a file on disk. */
   localPath(key: string): string;
+  /** Deletes the bytes for a key; a key with no bytes is not an error. */
+  remove(key: string): Promise<void>;
 }
 
 const KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*(\/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$/;
@@ -59,6 +61,10 @@ export class LocalStorage implements ArtifactStorage {
       if (isMissingFile(err)) throw new ArtifactMissingError(key);
       throw err;
     }
+  }
+
+  async remove(key: string) {
+    await rm(this.localPath(key), { force: true });
   }
 
   async exists(key: string) {

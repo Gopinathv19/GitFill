@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity, BookOpen, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, LogOut, PanelLeftClose, Plus, Presentation, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -103,8 +103,18 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
         {!workspaces.data && !workspaces.error && [0, 1, 2].map((i) => <Skeleton key={i} className="mx-2 my-1.5 h-7" />)}
         {(workspaces.error || sessions.error) && <p className="px-2 py-1 text-xs text-destructive">{workspaces.error ?? sessions.error}</p>}
         {workspaces.data?.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">Create a workspace to start a session.</p>}
-        {groups.map(({ ws, sessions: list }) => (
-          <WorkspaceGroup key={ws.id} id={ws.id} name={ws.name} sessions={list} loading={!sessions.data} active={ws.id === currentWorkspace} currentSession={currentSession} />
+        {groups.map(({ ws, sessions: list }, i) => (
+          <WorkspaceGroup
+            key={ws.id}
+            id={ws.id}
+            name={ws.name}
+            sessions={list}
+            loading={!sessions.data}
+            active={ws.id === currentWorkspace}
+            // Outside any workspace, only the first (most recent) folder starts open.
+            openByDefault={currentWorkspace ? ws.id === currentWorkspace : i === 0}
+            currentSession={currentSession}
+          />
         ))}
       </div>
 
@@ -174,17 +184,65 @@ function AccountMenu({ user, stub }: { user: SessionUser; stub: boolean }) {
   );
 }
 
-function WorkspaceGroup({ id, name, sessions, loading, active, currentSession }: { id: string; name: string; sessions: ChatSession[]; loading: boolean; active: boolean; currentSession?: string }) {
+/** Folders the user opened or closed, by workspace id, so the sidebar looks the same after a reload. */
+const FOLDERS_KEY = "gitfill.sidebar.folders";
+
+function storedFolders(): Record<string, boolean> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? "{}");
+    return raw && typeof raw === "object" ? (raw as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeFolder(id: string, open: boolean) {
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify({ ...storedFolders(), [id]: open }));
+  } catch {
+    // Private mode or full storage: the choice just lasts until the next reload.
+  }
+}
+
+function WorkspaceGroup({
+  id,
+  name,
+  sessions,
+  loading,
+  active,
+  openByDefault,
+  currentSession,
+}: {
+  id: string;
+  name: string;
+  sessions: ChatSession[];
+  loading: boolean;
+  active: boolean;
+  openByDefault: boolean;
+  currentSession?: string;
+}) {
   const [open, setOpen] = useState<boolean | null>(null);
   const [showAll, setShowAll] = useState(false);
-  // Folders start open when they are in view or have sessions; the user's toggle wins afterwards.
-  const expanded = open ?? (active || sessions.length > 0);
+  // The user's last choice for this folder wins; read after mount so server and client render the same.
+  useEffect(() => {
+    const stored = storedFolders()[id];
+    if (typeof stored === "boolean") setOpen(stored);
+  }, [id]);
+  // Moving into a workspace reveals its sessions, whatever the folder was before.
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active]);
+  const expanded = open ?? openByDefault;
+  const toggle = () => {
+    setOpen(!expanded);
+    storeFolder(id, !expanded);
+  };
   const visible = showAll ? sessions : sessions.slice(0, SESSIONS_PER_GROUP);
 
   return (
     <div className="mt-0.5">
       <div className={cn("group flex items-center rounded-md pr-1 transition-colors hover:bg-sidebar-accent/60", active && !currentSession && "bg-sidebar-accent")}>
-        <button onClick={() => setOpen(!expanded)} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground" aria-expanded={expanded}>
+        <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground" aria-expanded={expanded}>
           <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", expanded && "rotate-90")} />
           <span className="truncate">{name}</span>
           {sessions.length > 0 && <span className="shrink-0 text-[11px] text-muted-foreground/70">{sessions.length}</span>}

@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { DECK_TYPES } from "./deck-types";
 import { ICON_NAMES } from "./icons";
+import { TEMPLATE_IDS } from "./themes";
 
 /**
  * The deck specification: the editable source of truth. A slide is a fixed 16:9 page
@@ -12,7 +14,10 @@ import { ICON_NAMES } from "./icons";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const optText = (max: number) => z.string().trim().max(max).optional();
-const claimRefs = z.array(z.string().regex(/^C\d+$/)).max(6).default([]);
+/** C refs cite recorded code claims; U refs cite material the user uploaded. */
+export const REF_RE = /^[CU]\d+$/;
+const claimRefs = z.array(z.string().regex(REF_RE)).max(6).default([]);
+const assetId = z.string().uuid().describe("Id of an uploaded image from the provided asset list.");
 
 export const icon = z.enum(ICON_NAMES).describe("Icon from the fixed set.");
 export const STATUSES = ["implemented", "partial", "planned", "unverified"] as const;
@@ -44,6 +49,7 @@ export const architectureFigure = z.object({
         title: text(28),
         sub: optText(44).describe("What it does, a few words."),
         mono: optText(40).describe("Optional technical line: path, port, protocol or library."),
+        path: optText(200).describe("Repository file or directory this node stands for, from the evidence. Checked against the repository."),
         tone: tone.default("default"),
       }),
     )
@@ -112,7 +118,7 @@ const seqMessage = z.object({
 
 export const sequenceFigure = z.object({
   kind: z.literal("sequence"),
-  actors: z.array(z.object({ id: nodeId, label: text(20), sub: optText(22), accent: z.boolean().default(false) })).min(2).max(7),
+  actors: z.array(z.object({ id: nodeId, label: text(20), sub: optText(22), path: optText(200).describe("Repository file or directory of this participant."), accent: z.boolean().default(false) })).min(2).max(7),
   steps: z
     .array(z.union([seqMessage, z.object({ group: text(40), steps: z.array(seqMessage).min(1).max(8) })]))
     .min(2)
@@ -242,6 +248,16 @@ export const diagramBlock = z.object({
   claimRefs,
 });
 
+export const imageBlock = z.object({
+  type: z.literal("image"),
+  assetId,
+  title: optText(60),
+  caption: optText(160).describe("What the image shows and why it matters."),
+  frame: z.enum(["browser", "device", "plain"]).default("plain").describe("browser = web app screenshot, device = phone screenshot, plain = anything else."),
+  fit: z.enum(["contain", "cover"]).default("contain"),
+  claimRefs,
+});
+
 export const blockSchema = z.discriminatedUnion("type", [
   cardsBlock,
   statsBlock,
@@ -255,6 +271,7 @@ export const blockSchema = z.discriminatedUnion("type", [
   flashcardsBlock,
   glossaryBlock,
   diagramBlock,
+  imageBlock,
 ]);
 export type Block = z.infer<typeof blockSchema>;
 export type BlockType = Block["type"];
@@ -277,6 +294,7 @@ export const coverVisual = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tree"), title: text(40), items: z.array(z.object({ path: text(60), note: optText(40) })).min(3).max(10) }),
   z.object({ type: z.literal("stats"), items: z.array(z.object({ value: text(14), unit: optText(10), label: text(40) })).min(2).max(4) }),
   z.object({ type: z.literal("art") }),
+  z.object({ type: z.literal("image"), assetId, caption: optText(80) }),
 ]);
 
 export const coverSlide = z.object({
@@ -318,8 +336,33 @@ export const pageSlide = z.object({
 
 export const slideSchema = z.discriminatedUnion("layout", [coverSlide, contentsSlide, pageSlide]);
 
-export const THEMES = ["midnight", "daylight"] as const;
+export const THEMES = TEMPLATE_IDS;
 export type ThemeName = (typeof THEMES)[number];
+
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const fontName = z.string().regex(/^[A-Za-z0-9 \-]{2,40}$/);
+
+export const brandSchema = z.object({
+  name: z.string().trim().max(60).optional(),
+  accent: hexColor.optional(),
+  accent2: hexColor.optional(),
+  background: hexColor.optional(),
+  text: hexColor.optional(),
+  mode: z.enum(["dark", "light"]).optional(),
+  headingFont: fontName.optional(),
+  bodyFont: fontName.optional(),
+  logoAssetId: z.string().uuid().optional(),
+});
+
+/** Uploaded material a deck was made with: images it may show, documents it drew from (U refs). */
+export const materialSchema = z.object({
+  id: z.string().uuid(),
+  ref: z.string().regex(/^U\d+$/),
+  kind: z.enum(["image", "document", "template"]),
+  name: z.string().max(200),
+  description: z.string().max(600).default(""),
+});
+export type Material = z.infer<typeof materialSchema>;
 
 export const deckSpecSchema = z.object({
   format: z.literal(2).default(2),
@@ -328,7 +371,10 @@ export const deckSpecSchema = z.object({
   subtitle: z.string().max(160).default(""),
   audience: text(120),
   purpose: text(240),
-  theme: z.enum(THEMES).default("midnight"),
+  theme: z.enum(THEMES).default("midnight").describe("Template id."),
+  brand: brandSchema.optional(),
+  deckType: z.enum(DECK_TYPES).default("engineering_walkthrough"),
+  materials: z.array(materialSchema).max(40).default([]),
   /** Legacy switch from before `labels`; only used to fill in default labels for older decks. */
   showCommit: z.boolean().default(true),
   /**
@@ -344,6 +390,8 @@ export const deckSpecSchema = z.object({
     .optional(),
   slides: z.array(slideSchema).min(2).max(24),
 });
+
+export type Brand = z.infer<typeof brandSchema>;
 
 export type DeckSpec = z.infer<typeof deckSpecSchema>;
 export type Slide = z.infer<typeof slideSchema>;
@@ -380,8 +428,10 @@ export interface SpecIssue {
  * Semantic checks Zod cannot express: unique ids, diagram references to known nodes,
  * cited claims exist. Returns a repaired spec (bad edges and refs removed) and the issues found.
  */
-export function normalizeDeckSpec(spec: DeckSpec, knownRefs: ReadonlySet<string>): { spec: DeckSpec; issues: SpecIssue[] } {
+export function normalizeDeckSpec(spec: DeckSpec, knownRefs: ReadonlySet<string>, opts: { paths?: ReadonlySet<string> } = {}): { spec: DeckSpec; issues: SpecIssue[] } {
   const issues: SpecIssue[] = [];
+  const images = new Set(spec.materials.filter((m) => m.kind === "image").map((m) => m.id));
+  const known = new Set([...knownRefs, ...spec.materials.map((m) => m.ref)]);
   const seen = new Set<string>();
   const slides = spec.slides.map((slide, index) => {
     let id = slide.id;
@@ -397,13 +447,32 @@ export function normalizeDeckSpec(spec: DeckSpec, knownRefs: ReadonlySet<string>
 
     walkRefs(s, (refs) =>
       refs.filter((r) => {
-        if (knownRefs.has(r)) return true;
+        if (known.has(r)) return true;
         issues.push({ slideId: id, message: `Removed unknown claim ref ${r}.` });
         return false;
       }),
     );
+    if (s.layout === "page") {
+      // An image the deck has no upload for cannot be shown; drop it rather than render a hole.
+      const keep = (b: Block) => {
+        if (b.type !== "image" || images.has(b.assetId)) return true;
+        issues.push({ slideId: id, message: `Removed an image block with unknown asset ${b.assetId}.` });
+        return false;
+      };
+      s.main = s.main.filter(keep);
+      s.side = s.side.filter(keep);
+      if (!s.main.length && s.side.length) s.main = [s.side.shift()!];
+      if (!s.main.length) s.main = [{ type: "callout", tone: "note", text: s.lede || s.title, claimRefs: [] }];
+    }
+    if (s.layout === "cover" && s.visual.type === "image" && !images.has(s.visual.assetId)) {
+      issues.push({ slideId: id, message: "Cover image has an unknown asset; using the cover art slot instead." });
+      s.visual = { type: "art" };
+    }
     for (const block of pageBlocks(s)) {
-      if (block.type === "diagram") normalizeFigure(block.figure, (m) => issues.push({ slideId: id, message: m }));
+      if (block.type === "diagram") {
+        normalizeFigure(block.figure, (m) => issues.push({ slideId: id, message: m }));
+        if (opts.paths) checkFigurePaths(block.figure, opts.paths, (m) => issues.push({ slideId: id, message: m }));
+      }
       if (block.type === "table") {
         const n = block.columns.length;
         for (const row of block.rows) {
@@ -416,6 +485,39 @@ export function normalizeDeckSpec(spec: DeckSpec, knownRefs: ReadonlySet<string>
     return s;
   });
   return { spec: { ...spec, slides }, issues };
+}
+
+/** True when `p` names a file in the repository or a directory that contains one. */
+export function pathExists(p: string, paths: ReadonlySet<string>): boolean {
+  const clean = p.trim().replace(/^\.?\//, "").replace(/:\d+(-\d+)?$/, "").replace(/\/+$/, "");
+  if (!clean) return false;
+  if (paths.has(clean)) return true;
+  for (const x of paths) if (x.startsWith(`${clean}/`)) return true;
+  return false;
+}
+
+/**
+ * Diagram nodes may name the repository path they stand for. A path that does not exist is
+ * removed and the node is drawn as inferred (dashed), so the picture never claims code that is
+ * not there.
+ */
+export function checkFigurePaths(f: Figure, paths: ReadonlySet<string>, report: (message: string) => void): void {
+  if (f.kind === "architecture") {
+    for (const n of f.nodes) {
+      if (n.path && !pathExists(n.path, paths)) {
+        report(`Diagram node "${n.title}" named ${n.path}, which is not in the repository; marked as inferred.`);
+        delete n.path;
+        if (n.tone === "default") n.tone = "external";
+      }
+    }
+  } else if (f.kind === "sequence") {
+    for (const a of f.actors) {
+      if (a.path && !pathExists(a.path, paths)) {
+        report(`Sequence actor "${a.label}" named ${a.path}, which is not in the repository.`);
+        delete a.path;
+      }
+    }
+  }
 }
 
 /** Drops edges, transitions and messages that point at unknown ids; reports what was dropped. */

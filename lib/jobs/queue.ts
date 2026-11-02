@@ -2,7 +2,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { parseGitHubUrl, canonicalRepoUrl } from "@/lib/connectors/github/url";
 import { rowsOf, type Database } from "@/lib/db";
 import { generationJobs, projects, type JobKind, type JobStatus } from "@/lib/db/schema";
-import type { GenerateRequest, VideoRequest } from "@/lib/validation/request";
+import type { GenerateRequest, VideoRequest, ReviseRequest } from "@/lib/validation/request";
 
 export const ACTIVE_STATUSES: JobStatus[] = [
   "analyzing_repository",
@@ -67,10 +67,10 @@ export async function enqueueVideo(db: Database, deck: { id: string; projectId: 
   return job!;
 }
 
-export async function enqueueRevision(db: Database, deck: { id: string; projectId: string }, repositoryUrl: string, instruction: string) {
+export async function enqueueRevision(db: Database, deck: { id: string; projectId: string }, repositoryUrl: string, request: ReviseRequest) {
   const [job] = await db
     .insert(generationJobs)
-    .values({ projectId: deck.projectId, kind: "revise", deckId: deck.id, repositoryUrl, userPrompt: instruction, options: { instruction } })
+    .values({ projectId: deck.projectId, kind: "revise", deckId: deck.id, repositoryUrl, userPrompt: request.instruction, options: request })
     .returning();
   return job!;
 }

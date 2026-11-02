@@ -33,7 +33,9 @@ flowchart LR
 | `lib/understanding/` | Feature agents and renderers: `schemas.ts` (Zod outputs: handbook, explanation, commit report, implementation brief, doc comments, docs drift), `handbook.ts`, `explain.ts`, `compare.ts`, `reuse.ts`, `docs.ts`, `render.ts` (footnoted evidence, GitHub links at the commit, diagram blocks). |
 | `lib/evidence/` | Claim verification against real file lines. |
 | `lib/jobs/` | Queue (Postgres `SKIP LOCKED`), pipeline dispatch by job kind, document jobs, inline worker, DB recorder and read models. |
-| `lib/presentation/`, `lib/render/`, `lib/validation/`, `lib/documents/` | The presentation pipeline: deck spec (pages of typed blocks), HTML/SVG page renderer and themes (`html/`), Chromium render with DOM measurements (`render/browser.ts`), overflow/underfill/diagram-legibility checks, visual review, repair, image-based PPTX, README and evidence report. |
+| `lib/presentation/`, `lib/render/`, `lib/validation/`, `lib/documents/` | The presentation pipeline: deck spec (pages of typed blocks, including uploaded images), deck types (`deck-types.ts`: story, density, recipes per kind of deck), templates and brands (`themes.ts`), code facts and user material for prompts (`evidence.ts`), whole-deck content review (`content-review.ts`), HTML/SVG page renderer (`html/`), Chromium render with DOM measurements and native extraction (`render/browser.ts`, `render/native-extract.js`), overflow/underfill/diagram-legibility checks, visual review, repair, editable PPTX (`pptx.ts`), README and evidence report. |
+| `lib/agent/digest.ts` | The light reading tier: large files are compressed once (purpose + key points with line ranges) by the reader role at minimal reasoning, cached by content hash in artifact storage, and shown to the tool loops as `<file_digest>` blocks (`describeCompressed` in `repo-tools.ts`); claims citing them are still verified against the real lines. |
+| `lib/uploads/` | Files users add to a workspace: detection from bytes, image sizes, text from Markdown/.docx/.pptx, a .pptx theme read as a brand (`files.ts`), storage, vision descriptions and access checks (`service.ts`). |
 | `lib/auth/` | Sessions (HMAC cookies), GitHub OAuth with per-user encrypted tokens (`github-token.ts`: AES-256-GCM at rest, `githubClientFor(user)` / `githubClientForJob(job)` so every GitHub read acts as the owner), API tokens (hashed) and request authentication for the extension API. |
 | `lib/ext/` | Request schemas of `/api/ext/*`. |
 | `extension/` | The VS Code extension (TypeScript, no bundler): commands, workspace collector, git helper, results webview, preview/apply flows. |
@@ -55,7 +57,15 @@ flowchart LR
 `workspaces` → `workspace_repositories`; `projects` (one per job) → `repository_snapshots` (repo, branch, **commit SHA**, summary) → `evidence_claims`.
 `generation_jobs` (kind: generate, revise, handbook, compare, reuse; status stages) → `agent_runs` → `agent_events`.
 `documents` (kind, title, Markdown, structured spec, metadata, primary/secondary snapshot, job).
-`decks` → `deck_versions` → `artifacts`. `api_tokens` (hashed) for the extension.
+`decks` → `deck_versions` → `artifacts`. `uploads` (workspace files: images, documents, templates; bytes in artifact storage). `api_tokens` (hashed) for the extension.
+
+## Presentations
+
+1. **Intent.** The wizard (or the chat agent) collects the deck type, audience, length, template or brand, uploads, must-cover and skip lists. Before generating, `lib/agent/deck-questions.ts` scouts the repository with read-only tools and asks 2-4 questions grounded in what it found; the answers go into every prompt.
+2. **Evidence.** The analyst traces 2-4 workflows hop by hop and records claims; code adds routes, directories and measured module dependencies (`codeFacts`), and uploaded documents are quoted as U refs. Diagrams name the repository path of each node; paths that do not exist are removed and the node is drawn as inferred.
+3. **Plan.** The outline follows the deck type's story unless the user's brief decides otherwise, and fixes a shared vocabulary; pages are composed in parallel with deck-type prompts (`deckGuide`). A content reviewer reads the whole deck against the brief and evidence (coverage, accuracy, repetition, naming, audience) and the affected pages are rewritten.
+4. **Render, check, repair.** Pages render in Chromium in the chosen template; overflow, underfill (threshold by deck density), diagram legibility and a visual review drive bounded repairs.
+5. **Export.** The editable .pptx is read back from the final render: every box, line, text run, image and diagram shape becomes a native PowerPoint object at the position the browser laid it out, with the template's Office fonts; the background is an image. `outputs.pptx: "image"` writes one picture per slide instead. `npx tsx scripts/native-preview.ts` renders what PowerPoint will draw next to the HTML, for checking the export.
 
 ## Web-to-editor workflow (planned)
 

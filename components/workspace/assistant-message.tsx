@@ -18,13 +18,13 @@ const STATUS: Record<EvidenceStatus, { label: string; icon: typeof CircleCheck; 
  * An agent reply. Answers with evidence get two tabs: the answer (citations as numbered status
  * chips) and the evidence list, so the footnotes don't bury the answer. Plain replies render as-is.
  */
-export const AssistantMessage = memo(function AssistantMessage({ content, onAsk, answerable = false }: { content: string; onAsk?: (question: string) => void; answerable?: boolean }) {
+export const AssistantMessage = memo(function AssistantMessage({ content, onAsk, answerable = false, workspaceId }: { content: string; onAsk?: (question: string) => void; answerable?: boolean; workspaceId?: string }) {
   const questions = useMemo(() => parseQuestions(content), [content]);
   if (questions.ask) {
     return (
       <div className="flex flex-col gap-3">
         {questions.text ? <Markdown className="text-sm">{questions.text}</Markdown> : null}
-        <QuestionCard ask={questions.ask} onAnswer={answerable ? onAsk : undefined} />
+        <QuestionCard ask={questions.ask} onAnswer={answerable ? onAsk : undefined} workspaceId={workspaceId} />
       </div>
     );
   }

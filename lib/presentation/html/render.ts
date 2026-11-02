@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { DeckSpec, PageSlide, Slide } from "../spec";
 import { getTheme, themeCss } from "../themes";
-import { inline, renderBlock, renderCoverVisual, type FigureCounter } from "./components";
+import { inline, renderBlock, renderCoverVisual, type FigureCounter, type ImageMap } from "./components";
 import { esc } from "./diagrams";
 
 /**
@@ -23,6 +23,8 @@ export interface RenderContext {
   coverMeta?: Array<[string, string]>;
   /** Image data URIs keyed by slide id (cover art). */
   illustrations?: ReadonlyMap<string, string>;
+  /** Uploaded images (screenshots, logo) as data URIs keyed by asset id. */
+  images?: ImageMap;
 }
 
 const ASSET_DIR = path.join(process.cwd(), "lib", "presentation");
@@ -101,30 +103,40 @@ export function projectName(spec: DeckSpec): string {
 }
 
 export function renderDeckHtml(spec: DeckSpec, ctx: RenderContext): string {
-  const theme = getTheme(spec.theme);
+  const theme = getTheme(spec.theme, spec.brand);
   const sections = sectionsOf(spec);
   const total = spec.slides.length;
-  const name = projectName(spec);
-  const mark = (/[A-Za-z0-9]/.exec(name)?.[0] ?? "G").toUpperCase();
+  const name = spec.brand?.name?.trim() || projectName(spec);
+  const logo = spec.brand?.logoAssetId ? ctx.images?.get(spec.brand.logoAssetId) : undefined;
+  const letter = (/[A-Za-z0-9]/.exec(name)?.[0] ?? "G").toUpperCase();
+  const mark = (size: "" | "lg") => (logo ? `<span class="logo ${size}"><img src="${logo}" alt=""/></span>` : `<span class="mark ${size}">${esc(letter)}</span>`);
   const figs: FigureCounter = { n: 0 };
+  const chrome = theme.chrome;
 
   const head = (s: PageSlide | null) => {
+    if (chrome !== "full") return "";
     const sec = s ? sections.find((x) => x.title.toLowerCase() === sectionName(s.section).toLowerCase()) : null;
-    return `<header class="pg-head"><span class="mark">${esc(mark)}</span><span>${esc(name)}</span>${sec ? `<span>/</span><span class="sec">${sec.n} · ${esc(sec.title)}</span>` : ""}<span class="spacer"></span>${ctx.repoLabel ? `<span>${esc(ctx.repoLabel)}</span>` : ""}</header>`;
+    return `<header class="pg-head">${mark("")}<span>${esc(name)}</span>${sec ? `<span>/</span><span class="sec">${sec.n} · ${esc(sec.title)}</span>` : ""}<span class="spacer"></span>${ctx.repoLabel ? `<span>${esc(ctx.repoLabel)}</span>` : ""}</header>`;
   };
+  const num = (i: number) => `<span class="num">${String(i + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</span>`;
   const foot = (i: number) =>
-    `<footer class="pg-foot"><span class="gf">${GITFILL_MARK}</span><span>GitFill${ctx.evidence ? ` · ${esc(ctx.evidence)}` : ""}</span><span class="spacer"></span><span class="num">${String(i + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}</span></footer>`;
+    chrome === "full"
+      ? `<footer class="pg-foot"><span class="gf">${GITFILL_MARK}</span><span>GitFill${ctx.evidence ? ` · ${esc(ctx.evidence)}` : ""}</span><span class="spacer"></span>${num(i)}</footer>`
+      : chrome === "minimal"
+        ? `<footer class="pg-foot">${mark("")}<span>${esc(name)}</span><span class="spacer"></span>${num(i)}</footer>`
+        : `<footer class="pg-foot clean"><span class="spacer"></span>${num(i)}</footer>`;
 
   const renderSlide = (s: Slide, i: number): string => {
     const attrs = `data-slide="${esc(s.id)}" data-index="${i}"`;
     if (s.layout === "cover") {
-      const visual = renderCoverVisual(s.visual, ctx.illustrations?.get(s.id));
+      const visual = renderCoverVisual(s.visual, ctx.illustrations?.get(s.id), ctx.images);
       const meta = (ctx.coverMeta ?? s.meta.map((m) => [m.label, m.value] as const)).slice(0, 5);
-      return `<section class="page cover style-atlas" ${attrs}>
-        <div class="cover-top"><span class="mark lg">${esc(mark)}</span>${esc(name)}${s.tag ? `<span class="tag badge accent">${esc(s.tag)}</span>` : ""}</div>
+      const band = theme.cover === "band" ? `<div class="cover-band"></div>` : "";
+      return `<section class="page cover cv-${theme.cover} style-${theme.pageStyle}" ${attrs}>${band}
+        <div class="cover-top">${mark("lg")}<span class="cover-name">${esc(name)}</span>${s.tag ? `<span class="tag badge accent">${esc(s.tag)}</span>` : ""}</div>
         <div class="cover-main ${visual ? "" : "no-visual"}" data-body>
-          <div>${s.kicker ? `<div class="kicker">${inline(s.kicker)}</div>` : ""}<h1>${inline(s.title, { accent: true })}</h1><p class="sub">${inline(s.subtitle)}</p></div>
-          ${visual ? `<div>${visual}</div>` : ""}
+          <div class="cover-text">${s.kicker ? `<div class="kicker">${inline(s.kicker)}</div>` : ""}<h1>${inline(s.title, { accent: true })}</h1><p class="sub">${inline(s.subtitle)}</p></div>
+          ${visual ? `<div class="cover-visual">${visual}</div>` : ""}
         </div>
         <div class="cover-meta">${meta.map(([k, v]) => `<div>${esc(k)}<b>${inline(v)}</b></div>`).join("")}</div>
       </section>`;
@@ -136,7 +148,7 @@ export function renderDeckHtml(spec: DeckSpec, ctx: RenderContext): string {
           <ul>${sec.pages.map((p) => `<li><span>${esc(p.title)}</span><span>${p.page}</span></li>`).join("")}</ul></div>`,
         )
         .join("")}</div>`;
-      return `<section class="page style-atlas" ${attrs}>${head(null)}<div class="pg-title"><div class="kicker">Deck</div><h1>${inline(s.title)}</h1>${s.lede ? `<p class="lede">${inline(s.lede)}</p>` : ""}</div><div class="pg-body" data-body>${toc}</div>${foot(i)}</section>`;
+      return `<section class="page style-${theme.pageStyle}" ${attrs}>${head(null)}<div class="pg-title"><div class="kicker">Deck</div><h1>${inline(s.title)}</h1>${s.lede ? `<p class="lede">${inline(s.lede)}</p>` : ""}</div><div class="pg-body" data-body>${toc}</div>${foot(i)}</section>`;
     }
 
     const sec = sections.find((x) => x.title.toLowerCase() === sectionName(s.section).toLowerCase())!;
@@ -146,7 +158,7 @@ export function renderDeckHtml(spec: DeckSpec, ctx: RenderContext): string {
     const widths = columnWidths(arrangement);
     const blocks = (list: PageSlide["main"], which: "main" | "side", width: number) =>
       list
-        .map((b, bi) => `<div class="blk${b.type === "diagram" ? " fig" : ""}" data-block="${which}.${bi}" data-type="${b.type}">${renderBlock(b, width, figs)}</div>`)
+        .map((b, bi) => `<div class="blk${b.type === "diagram" || b.type === "image" ? " fig" : ""}" data-block="${which}.${bi}" data-type="${b.type}">${renderBlock(b, width, figs, ctx.images)}</div>`)
         .join("");
     const col = (inner: string, which: "main" | "side") => `<div class="col" data-col="${which}">${inner}</div>`;
     // A stacked page keeps side blocks: they follow the main ones in the single column.
@@ -173,7 +185,7 @@ ${themeCss(theme)}
 .blk.fig{flex:1 1 auto}
 </style>
 </head>
-<body>
+<body class="tpl-${theme.name} chrome-${chrome}">
 ${spec.slides.map(renderSlide).join("\n")}
 </body>
 </html>`;

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser } from "playwright-core";
@@ -17,11 +18,43 @@ export interface PageMeasure {
   hasDiagram: boolean;
 }
 
+export interface TextRun {
+  text: string;
+  /** CSS px. */
+  size: number;
+  /** Hex without '#'. */
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  font: "sans" | "heading" | "mono";
+  spacing: number;
+  /** Outlined text: no fill, a stroke of this width (px) in `color`. */
+  outline?: number;
+}
+
+/** One drawing item read from the rendered page; lengths in CSS px from the page's top-left corner. */
+export type NativeItem =
+  | { t: "rect" | "ellipse" | "diamond"; x: number; y: number; w: number; h: number; fill: string | null; fillAlpha: number; line: { color: string; width: number; dash: boolean } | null; radius?: number }
+  | { t: "line"; x1: number; y1: number; x2: number; y2: number; color: string; width: number; dash: boolean; arrow: boolean }
+  | { t: "text"; x: number; y: number; w: number; h: number; runs: TextRun[]; align: "left" | "center" | "right"; lineHeight: number; lines: number; pre: boolean; svg?: boolean }
+  | { t: "image"; x: number; y: number; w: number; h: number; src: string; fit: "contain" | "cover"; nw: number; nh: number };
+
+export interface NativePage {
+  slideId: string;
+  width: number;
+  height: number;
+  items: NativeItem[];
+}
+
 export interface RenderedSlide {
   index: number;
   slideId: string;
   pngPath: string;
   measure: PageMeasure;
+  /** The page with its content hidden (gradients, grids), for native .pptx backgrounds. */
+  backgroundPath?: string;
+  /** The page as native drawing items, for the editable .pptx. */
+  native?: NativePage;
 }
 
 export interface RenderResult {
@@ -52,7 +85,13 @@ export async function browser(): Promise<Browser> {
  * Renders a deck document exactly as it will be delivered: one PNG per page, a PDF, and
  * DOM measurements for validation. The HTML is self-contained, so nothing is fetched.
  */
-export async function renderDeckHtml(html: string, outDir: string, opts: { scale?: number; pdf?: boolean } = {}): Promise<RenderResult> {
+let nativeScript: string | null = null;
+function extractNative(): string {
+  nativeScript ??= readFileSync(path.join(process.cwd(), "lib", "render", "native-extract.js"), "utf8");
+  return nativeScript;
+}
+
+export async function renderDeckHtml(html: string, outDir: string, opts: { scale?: number; pdf?: boolean; native?: boolean } = {}): Promise<RenderResult> {
   await mkdir(outDir, { recursive: true });
   const htmlPath = path.join(outDir, "deck.html");
   await writeFile(htmlPath, html);
@@ -74,6 +113,20 @@ export async function renderDeckHtml(html: string, outDir: string, opts: { scale
       const pngPath = path.join(outDir, `slide-${String(i + 1).padStart(2, "0")}.png`);
       await el.screenshot({ path: pngPath, animations: "disabled" });
       slides.push({ index: i, slideId: measures[i]!.slideId, pngPath, measure: measures[i]!.measure });
+    }
+
+    if (opts.native) {
+      const pages = (await page.evaluate(extractNative())) as NativePage[];
+      if (pages.length !== slides.length) throw new RenderError(`Read ${pages.length} pages for the editable deck but rendered ${slides.length}.`);
+      pages.forEach((p, i) => (slides[i]!.native = p));
+      // Backgrounds without content: gradients and dot grids stay exactly as designed.
+      await page.addStyleTag({ content: ".page > * { visibility: hidden !important; }" });
+      for (const [i, el] of sheets.entries()) {
+        const bg = path.join(outDir, `bg-${String(i + 1).padStart(2, "0")}.png`);
+        await el.screenshot({ path: bg, animations: "disabled" });
+        slides[i]!.backgroundPath = bg;
+      }
+      await page.addStyleTag({ content: ".page > * { visibility: visible !important; }" });
     }
 
     const pdfPath = path.join(outDir, "deck.pdf");

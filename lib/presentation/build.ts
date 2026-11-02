@@ -6,7 +6,7 @@ import { renderDeckHtml as renderPages, type RenderResult } from "@/lib/render/b
 import { checkRender, checkSpec, type SlideIssue } from "@/lib/validation/checks";
 import { reviewSlidesVisually } from "@/lib/validation/visual-review";
 import { renderDeckHtml } from "./html/render";
-import { writePptx } from "./pptx";
+import { writePptx, type PptxMode } from "./pptx";
 import { repairDeterministically, repairWithModel, type RepairAction } from "./repair";
 import { slideSchema, type DeckSpec, type Slide } from "./spec";
 
@@ -43,6 +43,10 @@ export interface BuildOptions {
   workDir: string;
   /** Local image paths keyed by slide id (cover art). */
   illustrations: ReadonlyMap<string, string>;
+  /** Uploaded images (screenshots, logo) as data URIs keyed by asset id. */
+  images?: ReadonlyMap<string, string>;
+  /** native = editable PowerPoint objects (default); image = one picture per slide. */
+  pptxMode?: PptxMode;
   client: MuseClient | null;
   recorder: RunRecorder;
   /** Repository evidence for repairs that need to add content. */
@@ -66,12 +70,12 @@ export async function buildValidatedDeck(opts: BuildOptions): Promise<BuildResul
   let spec = opts.spec;
   const rounds: ValidationRound[] = [];
   let reviewIds = opts.reviewSlideIds;
-  let last: { render: RenderResult; issues: SlideIssue[]; scores: Record<string, number> } | undefined;
+  let last: { render: RenderResult; issues: SlideIssue[]; scores: Record<string, number>; html: string } | undefined;
   const illustrations = await loadImages(opts.illustrations);
 
   for (let round = 0; round <= maxRounds; round++) {
     await opts.recorder.setStage(round === 0 ? "generating_presentation" : "repairing_presentation");
-    const html = renderDeckHtml(spec, { repoLabel: opts.repoLabel, evidence: opts.evidenceLabel, coverMeta: opts.coverMeta, illustrations });
+    const html = renderDeckHtml(spec, { repoLabel: opts.repoLabel, evidence: opts.evidenceLabel, coverMeta: opts.coverMeta, illustrations, images: opts.images });
 
     await opts.recorder.setStage("rendering_slides");
     const renderEvent = await opts.recorder.start("tool", "render_slides", { round, slides: spec.slides.length });
@@ -103,7 +107,7 @@ export async function buildValidatedDeck(opts: BuildOptions): Promise<BuildResul
     const issues = [...deterministic, ...visual];
     const roundInfo: ValidationRound = { round, issues, repairs: [], visualScores: scores };
     rounds.push(roundInfo);
-    last = { render, issues, scores: { ...(last?.scores ?? {}), ...scores } };
+    last = { render, issues, scores: { ...(last?.scores ?? {}), ...scores }, html };
 
     const toRepair = groupBySlide(issues.filter((i) => i.source !== "visual_review" || REPAIRABLE_VISUAL.has(i.severity)));
     if (toRepair.size === 0 || round === maxRounds) break;
@@ -138,6 +142,7 @@ export async function buildValidatedDeck(opts: BuildOptions): Promise<BuildResul
             pngPath: render.slides[job.index]?.pngPath,
             evidence: opts.evidence,
             recorder: opts.recorder,
+            deckType: spec.deckType,
           });
           slides[job.index] = fixed.slide;
           roundInfo.repairs.push(fixed.action);
@@ -162,9 +167,23 @@ export async function buildValidatedDeck(opts: BuildOptions): Promise<BuildResul
     .map(([, v]) => v);
 
   await opts.recorder.setStage("generating_presentation");
-  const pptxEvent = await opts.recorder.start("tool", "generate_pptx", { slides: spec.slides.length });
-  const pptx = await writePptx(spec, final.render.slides);
-  await pptxEvent.succeed({ bytes: pptx.byteLength });
+  const mode = opts.pptxMode ?? "native";
+  const pptxEvent = await opts.recorder.start("tool", "generate_pptx", { slides: spec.slides.length, mode });
+  let pptx: Buffer;
+  try {
+    // The editable deck is read from a fresh render of the final pages, the same HTML that was validated.
+    const slides = mode === "native" ? (await renderPages(final.html, path.join(opts.workDir, "native"), { native: true, pdf: false })).slides : final.render.slides;
+    pptx = await writePptx(spec, slides, mode);
+    await pptxEvent.succeed({ bytes: pptx.byteLength, mode });
+  } catch (err) {
+    // An editable deck that cannot be built must not cost the user the deck: fall back to pictures.
+    if (mode !== "native") {
+      await pptxEvent.fail(err instanceof Error ? err.message : "pptx failed");
+      throw err;
+    }
+    pptx = await writePptx(spec, final.render.slides, "image");
+    await pptxEvent.succeed({ bytes: pptx.byteLength, mode: "image", fallback: err instanceof Error ? err.message.slice(0, 200) : "native export failed" });
+  }
 
   return {
     spec,

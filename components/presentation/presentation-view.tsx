@@ -14,6 +14,8 @@ import { Segmented } from "@/components/workspace/segmented";
 import { api, ApiError } from "@/lib/client/api";
 import { revisionProgress } from "@/lib/client/revision-progress";
 import { useJob, type JobView } from "@/lib/client/use-job";
+import { isTemplateId, TEMPLATES, type TemplateId } from "@/lib/presentation/themes";
+import { TemplateGallery } from "./template-gallery";
 import { collectVideos, VideoPanel } from "./video-panel";
 import { cn as cx } from "@/lib/utils";
 
@@ -73,7 +75,7 @@ interface Version {
   version: number;
   changeSummary: string | null;
   createdAt: string;
-  spec: { title: string; slides: Array<{ id: string; title: string; layout: string }> };
+  spec: { title: string; theme?: string; slides: Array<{ id: string; title: string; layout: string }> };
   validation: Validation | null;
   artifacts: Artifact[];
 }
@@ -274,7 +276,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
       {live && (running || live.status === "failed") ? (
         <RevisionProgress job={live} now={now} onDismiss={() => setLiveJobId(null)} />
       ) : (
-        <RevisionBox deckId={deck.id} onStarted={(jobId) => setLiveJobId(jobId)} />
+        <RevisionBox deckId={deck.id} theme={version.spec.theme} onStarted={(jobId) => setLiveJobId(jobId)} />
       )}
 
       <VideoPanel deckId={deck.id} videos={videos} jobId={videoJobId} onJob={setVideoJobId} onDone={reload} />
@@ -399,10 +401,26 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "wa
   );
 }
 
-function RevisionBox({ deckId, onStarted }: { deckId: string; onStarted: (jobId: string) => void }) {
+function RevisionBox({ deckId, theme, onStarted }: { deckId: string; theme?: string; onStarted: (jobId: string) => void }) {
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const current: TemplateId = theme && isTemplateId(theme) ? theme : "midnight";
+  const [template, setTemplate] = useState<TemplateId>(current);
+  const [picking, setPicking] = useState(false);
+
+  /** Switching template re-renders every slide in the new look; the content is not regenerated. */
+  async function switchTemplate() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { jobId } = await api<{ jobId: string }>(`/api/presentations/${deckId}/revise`, { method: "POST", body: JSON.stringify({ instruction: `Switch to the ${TEMPLATES[template].name} template.`, theme: template }) });
+      onStarted(jobId);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not switch the template.");
+      setSubmitting(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -437,6 +455,27 @@ function RevisionBox({ deckId, onStarted }: { deckId: string; onStarted: (jobId:
           Apply revision
         </Button>
       </form>
+      <div className="border-t px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span>
+            Template: <span className="font-medium">{TEMPLATES[current].name}</span>
+          </span>
+          <Button size="sm" variant="outline" onClick={() => setPicking((p) => !p)}>
+            {picking ? "Close" : "Change template"}
+          </Button>
+        </div>
+        {picking ? (
+          <div className="mt-3 space-y-3">
+            <TemplateGallery compact value={template} onChange={setTemplate} />
+            <div className="flex justify-end">
+              <Button size="sm" disabled={submitting || template === current} onClick={() => void switchTemplate()}>
+                {submitting ? <Spinner /> : null}
+                Apply {TEMPLATES[template].name}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
       {error ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{error}</p> : null}
     </Card>
   );

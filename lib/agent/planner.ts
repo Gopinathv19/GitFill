@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { MuseClient } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
-import { COMPOSE_SYSTEM_PROMPT, OUTLINE_SYSTEM_PROMPT, REVISION_SYSTEM_PROMPT } from "@/lib/ai/prompts";
+import { composePrompt, outlinePrompt, revisionPrompt } from "@/lib/ai/prompts";
 import type { SourceSnapshot } from "@/lib/connectors/types";
 import { formatCitation, type Claim } from "@/lib/evidence/evidence";
 import {
@@ -18,6 +18,9 @@ import {
   type Slide,
   type SpecIssue,
 } from "@/lib/presentation/spec";
+import { reviewDeckContent } from "@/lib/presentation/content-review";
+import { deckTypeDef, slidesForMinutes, type DeckType } from "@/lib/presentation/deck-types";
+import { materialsEvidence, type MaterialText } from "@/lib/presentation/evidence";
 import type { GenerateRequest } from "@/lib/validation/request";
 import type { RepositoryAnalysis } from "./analysis-schema";
 import type { RunRecorder } from "./recorder";
@@ -45,23 +48,71 @@ function repoFacts(snapshot: Pick<SourceSnapshot, "displayName" | "branch" | "ve
     .join("\n");
 }
 
-/** The evidence every deck prompt carries: computed facts, the analysis and the recorded claims. */
+/**
+ * The evidence every deck prompt carries: repository numbers, code facts computed from the source
+ * (routes, directories, module dependencies), the analysis with its traced workflows, the recorded
+ * claims, and whatever the user uploaded.
+ */
 export function deckEvidence(opts: {
   snapshot: Pick<SourceSnapshot, "displayName" | "branch" | "version" | "stats" | "metadata">;
   analysis: RepositoryAnalysis;
   claims: Claim[];
+  /** codeFacts() output; stored with the snapshot so revisions see the same facts. */
+  facts?: string;
+  materials?: MaterialText[];
 }): string {
   return [
     `Repository facts (computed by GitFill, safe to cite as numbers):\n${repoFacts(opts.snapshot)}`,
-    `Repository analysis:\n${JSON.stringify(opts.analysis)}`,
+    opts.facts ? `Code facts (computed from the source by GitFill, not by a model):\n${opts.facts}` : "",
+    `Repository analysis (workflows were traced hop by hop through the code):\n${JSON.stringify(opts.analysis)}`,
     `Recorded claims:\n${renderClaimsForPrompt(opts.claims)}`,
-  ].join("\n\n");
+    opts.materials?.length ? materialsEvidence(opts.materials) : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** The deck as the user asked for it, with deck-type defaults filled in. */
+export function resolveDeckRequest(request: GenerateRequest) {
+  const def = deckTypeDef(request.deckType);
+  return {
+    deckType: def.id as DeckType,
+    audience: request.audience || def.defaultAudience,
+    purpose: request.purpose || def.description,
+    slideCount: request.minutes ? slidesForMinutes(def.id, request.minutes) : request.slideCount,
+    theme: request.theme ?? def.suggestedTemplate,
+  };
+}
+
+/** The user's intent as one block of text for every deck prompt. */
+export function deckBrief(request: GenerateRequest): string {
+  const r = resolveDeckRequest(request);
+  const def = deckTypeDef(r.deckType);
+  return [
+    `Deck type: ${def.label} — ${def.description}`,
+    `Goal: ${r.purpose}`,
+    `Audience: ${r.audience}`,
+    request.minutes ? `Talk length: about ${request.minutes} minutes` : "",
+    `Slide count: about ${r.slideCount} (between ${Math.max(4, r.slideCount - 1)} and ${r.slideCount + 1})`,
+    request.mustCover.length ? `Must cover (each gets a page or a clear place on one):\n${request.mustCover.map((t) => `- ${t}`).join("\n")}` : "",
+    request.avoid.length ? `Leave out:\n${request.avoid.map((t) => `- ${t}`).join("\n")}` : "",
+    request.instructions ? `Additional instructions from the user: ${request.instructions}` : "",
+    request.answers ? `The user's answers to GitFill's questions about this deck (they decide framing and emphasis):\n${request.answers}` : "",
+    request.brief ? `Reader brief agreed with the user (it outranks the default story order; follow its framing, emphasis, names to feature and things to skip):\n${request.brief}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const outlineSchema = z.object({
   project: z.string().trim().min(1).max(60).describe("The project's name."),
   title: z.string().trim().min(1).max(90),
   subtitle: z.string().max(160).default(""),
+  vocabulary: z
+    .array(z.object({ term: z.string().trim().min(1).max(40), meaning: z.string().trim().max(120).default("") }))
+    .max(14)
+    .default([])
+    .describe("Names every page must use for the same things."),
   slides: z
     .array(
       z.object({
@@ -92,42 +143,71 @@ export async function planDeck(opts: {
   claims: Claim[];
   request: GenerateRequest;
   recorder: RunRecorder;
+  facts?: string;
+  materials?: MaterialText[];
+  /** Repository paths, to check paths named in diagrams. */
+  paths?: ReadonlySet<string>;
 }): Promise<{ spec: DeckSpec; issues: SpecIssue[] }> {
   const { request } = opts;
+  const resolved = resolveDeckRequest(request);
   const evidence = deckEvidence(opts);
   const known = new Set(opts.claims.map((c) => c.ref));
-  const brief = [
-    `Request: ${request.purpose}`,
-    `Audience: ${request.audience}`,
-    `Slide count: exactly ${request.slideCount}`,
-    request.instructions ? `Additional instructions from the user: ${request.instructions}` : "",
-    request.brief ? `Reader brief agreed with the user (it outranks the default story order; follow its framing, emphasis, names to feature and things to skip):\n${request.brief}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const brief = deckBrief(request);
+  const materials = (opts.materials ?? []).map((m) => m.material);
 
-  const outline = await planOutline({ ...opts, brief, evidence });
+  const outline = await planOutline({ client: opts.client, recorder: opts.recorder, deckType: resolved.deckType, slideCount: resolved.slideCount, audience: resolved.audience, brief, evidence });
   const metaLine = `${opts.snapshot.displayName} · ${opts.snapshot.branch} · ${opts.snapshot.version.slice(0, 7)}`;
-  const slides = await composeSlides({ client: opts.client, recorder: opts.recorder, outline, brief, evidence, metaLine, audience: request.audience });
+  const vocabulary = outline.vocabulary.map((v) => `${v.term}${v.meaning ? ` — ${v.meaning}` : ""}`).join("\n");
+  const slides = await composeSlides({ client: opts.client, recorder: opts.recorder, outline, brief, evidence, metaLine, audience: resolved.audience, deckType: resolved.deckType, vocabulary });
 
-  const spec = deckSpecSchema.parse({
+  let spec = deckSpecSchema.parse({
     project: outline.project,
     title: outline.title,
     subtitle: outline.subtitle,
-    audience: request.audience,
-    purpose: request.purpose.slice(0, 240) || "Explain the repository.",
-    theme: request.theme,
+    audience: resolved.audience.slice(0, 120) || "Engineering team",
+    purpose: resolved.purpose.slice(0, 240) || "Explain the repository.",
+    theme: resolved.theme,
+    brand: request.brand,
+    deckType: resolved.deckType,
+    materials,
     slides,
   });
-  return normalizeDeckSpec(spec, known);
+  spec = normalizeDeckSpec(spec, known, { paths: opts.paths }).spec;
+
+  // A whole-deck content pass: coverage of what the user asked for, accuracy, repetition, naming.
+  const review = await reviewDeckContent({ client: opts.client, recorder: opts.recorder, spec, brief, evidence });
+  if (review.findings.length) {
+    const bySlide = new Map<string, string[]>();
+    for (const f of review.findings) bySlide.set(f.slideId, [...(bySlide.get(f.slideId) ?? []), `- [${f.kind}] ${f.problem} Fix: ${f.fix}`]);
+    const fixed = await Promise.all(
+      spec.slides.map(async (slide) => {
+        const notes = bySlide.get(slide.id);
+        if (!notes || slide.layout === "contents") return slide;
+        const next = await reviseSlide({
+          client: opts.client,
+          recorder: opts.recorder,
+          spec,
+          evidence: `${brief}\n\nDeck vocabulary (use these names exactly):\n${vocabulary}\n\n${evidence}`,
+          id: slide.id,
+          layout: slide.layout,
+          purpose: "content_fix",
+          task: `Current slide:\n${JSON.stringify(slide)}\n\nThe content reviewer found:\n${notes.join("\n")}\n\nReturn the slide with these findings fixed; keep everything else as it is.`,
+        });
+        return next ?? slide;
+      }),
+    );
+    spec = normalizeDeckSpec(deckSpecSchema.parse({ ...spec, slides: fixed }), known, { paths: opts.paths }).spec;
+  }
+  return normalizeDeckSpec(spec, known, { paths: opts.paths });
 }
 
-async function planOutline(opts: { client: MuseClient; recorder: RunRecorder; request: GenerateRequest; brief: string; evidence: string }): Promise<DeckOutline> {
-  const n = opts.request.slideCount;
+async function planOutline(opts: { client: MuseClient; recorder: RunRecorder; deckType: DeckType; slideCount: number; audience: string; brief: string; evidence: string }): Promise<DeckOutline> {
+  const n = opts.slideCount;
+  const [lo, hi] = [Math.max(4, n - 1), Math.min(24, n + 1)];
   const schema = outlineSchema
-    .refine((o) => o.slides.length === n, { message: `The outline must have exactly ${n} slides.`, path: ["slides"] })
+    .refine((o) => o.slides.length >= lo && o.slides.length <= hi, { message: `The outline must have between ${lo} and ${hi} slides.`, path: ["slides"] })
     .refine((o) => o.slides[0]?.layout === "cover", { message: "Slide 1 must be the cover.", path: ["slides", 0, "layout"] });
-  const event = await opts.recorder.start("step", "plan_outline", { slideCount: n, audience: opts.request.audience }, modelFor("planner"));
+  const event = await opts.recorder.start("step", "plan_outline", { slideCount: n, audience: opts.audience, deckType: opts.deckType }, modelFor("planner"));
   try {
     const { data, usage } = await opts.client.structured({
       model: modelFor("planner"),
@@ -138,7 +218,7 @@ async function planOutline(opts: { client: MuseClient; recorder: RunRecorder; re
       // Hidden reasoning counts against max_tokens; the outline reasons over the whole analysis.
       maxTokens: 24_000,
       messages: [
-        { role: "system", content: OUTLINE_SYSTEM_PROMPT },
+        { role: "system", content: outlinePrompt(opts.deckType) },
         { role: "user", content: `${opts.brief}\n\n${opts.evidence}` },
       ],
     });
@@ -162,6 +242,8 @@ async function composeSlides(opts: {
   evidence: string;
   metaLine: string;
   audience: string;
+  deckType: DeckType;
+  vocabulary: string;
 }): Promise<Slide[]> {
   const { outline } = opts;
   const map = outline.slides.map((s) => `${s.id} [${s.layout}${s.section ? ` · ${s.section}` : ""}] ${s.title}: ${s.intent}`).join("\n");
@@ -186,6 +268,8 @@ async function composeSlide(opts: {
   evidence: string;
   metaLine: string;
   audience: string;
+  deckType: DeckType;
+  vocabulary: string;
 }): Promise<Slide> {
   const { item } = opts;
   // The contents title is short by design; a long outline title would fail the whole deck here.
@@ -214,8 +298,11 @@ async function composeSlide(opts: {
       correctionAttempts: 2,
       maxTokens: 16_000,
       messages: [
-        { role: "system", content: COMPOSE_SYSTEM_PROMPT },
-        { role: "user", content: `${opts.brief}\n\nDeck outline (for context; compose only ${item.id}):\n${opts.map}\n\n${page}\n\n${opts.evidence}` },
+        { role: "system", content: composePrompt(opts.deckType) },
+        {
+          role: "user",
+          content: `${opts.brief}\n\nDeck outline (for context; compose only ${item.id}):\n${opts.map}${opts.vocabulary ? `\n\nDeck vocabulary (use these names exactly):\n${opts.vocabulary}` : ""}\n\n${page}\n\n${opts.evidence}`,
+        },
       ],
     });
     await opts.recorder.addUsage(usage.inputTokens, usage.outputTokens);
@@ -385,7 +472,7 @@ export async function planRevision(opts: {
       correctionAttempts: 2,
       maxTokens: 16_000,
       messages: [
-        { role: "system", content: REVISION_SYSTEM_PROMPT },
+        { role: "system", content: revisionPrompt(opts.spec.deckType) },
         { role: "user", content: `Revision request: ${opts.instruction}\n\nCurrent deck specification:\n${JSON.stringify(opts.spec)}\n\n${evidence}` },
       ],
     });
@@ -438,6 +525,7 @@ async function reviseSlide(opts: {
   id: string;
   layout: "cover" | "page";
   task: string;
+  purpose?: string;
 }): Promise<Slide | null> {
   const schema =
     opts.layout === "cover"
@@ -448,13 +536,13 @@ async function reviseSlide(opts: {
   try {
     const { data, usage } = await opts.client.structured({
       model: modelFor("composer"),
-      purpose: `revise_slide:${opts.id}`,
+      purpose: `${opts.purpose ?? "revise_slide"}:${opts.id}`,
       schema,
       schemaName: opts.layout === "cover" ? "CoverSlide" : "PageSlide",
       correctionAttempts: 2,
       maxTokens: 16_000,
       messages: [
-        { role: "system", content: COMPOSE_SYSTEM_PROMPT },
+        { role: "system", content: composePrompt(opts.spec.deckType) },
         { role: "user", content: `Deck pages (for context; compose only ${opts.id}, and only the change below; other operations of this revision are handled separately):\n${map}\n\nCompose slide ${opts.id} (layout "${opts.layout}").\n${opts.task}\n\n${opts.evidence}` },
       ],
     });

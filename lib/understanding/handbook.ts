@@ -5,7 +5,7 @@ import { HANDBOOK_COMPOSER_PROMPT, HANDBOOK_EXPLORER_PROMPT } from "@/lib/ai/pro
 import { directorySummary, moduleGraph } from "@/lib/analysis/graph";
 import { dependencyDiagram } from "@/lib/analysis/mermaid";
 import type { RunRecorder } from "@/lib/agent/recorder";
-import { createRepositoryContext, createRepositoryTools, describeSnapshot, pruneUnknownRefs, type RepositoryContext } from "@/lib/agent/repo-tools";
+import { createRepositoryContext, createRepositoryTools, describeCompressed, pruneUnknownRefs, type RepositoryContext } from "@/lib/agent/repo-tools";
 import { renderClaimsForPrompt } from "@/lib/agent/planner";
 import { defineTool, runToolLoop } from "@/lib/agent/tool-loop";
 import type { SourceSnapshot } from "@/lib/connectors/types";
@@ -23,7 +23,8 @@ export interface HandbookResult {
   agent: { turns: number; toolCalls: number };
 }
 
-const INLINE_BUDGET = 380_000;
+/** Full text for small and key files; large files are digested once by the light reader. */
+const INLINE_BUDGET = 110_000;
 
 const AUDIENCE_LABEL: Record<HandbookRequest["audience"], string> = {
   technical_handbook: "complete technical handbook for engineers",
@@ -88,7 +89,7 @@ async function explore(client: MuseClient, context: RepositoryContext, request: 
       run: async () => ({ accepted: true }),
     }),
   ];
-  const described = describeSnapshot(context, { inlineBudgetChars: INLINE_BUDGET });
+  const described = await describeCompressed(context, { client, recorder, inlineBudgetChars: INLINE_BUDGET });
   const scopeLine =
     request.scope === "repository"
       ? "Scope: the whole repository."
@@ -117,6 +118,7 @@ async function explore(client: MuseClient, context: RepositoryContext, request: 
     maxToolCalls: 60,
     maxTokens: 12_000,
     reasoningEffort: "low",
+    trimHistory: { keepTurns: 2, maxChars: 200_000 },
   });
   const known = new Set(context.claims.map((c) => c.ref));
   return { notes: pruneUnknownRefs(result, known).value, turns, toolCalls };

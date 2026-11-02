@@ -26,6 +26,20 @@ export const repositoryAnalysisSchema = z.object({
   dataModels: z.array(z.object({ name: z.string().max(80), description: z.string().max(300), claimRefs: refs })).max(12),
   deployment: z.array(z.object({ aspect: z.string().max(80), description: z.string().max(300), claimRefs: refs })).max(10),
   setup: z.array(z.object({ step: z.string().max(200), command: z.string().max(200).optional(), claimRefs: refs })).max(10),
+  workflows: z
+    .array(
+      z.object({
+        name: z.string().max(80),
+        trigger: z.string().max(200).describe("What starts it, e.g. 'POST /api/login from the web client'."),
+        hops: z
+          .array(z.object({ from: z.string().max(40).describe("Component that acts."), to: z.string().max(40).describe("Component it calls or hands to."), action: z.string().max(120), location: z.string().max(200).describe("path:line"), claimRefs: refs }))
+          .min(2)
+          .max(12),
+      }),
+    )
+    .max(5)
+    .default([])
+    .describe("Key flows traced through the real code, hop by hop; sequence diagrams are drawn from these."),
   openQuestions: z.array(z.string().max(240)).max(8).describe("Things the evidence could not settle."),
 });
 
@@ -37,6 +51,7 @@ export function collectAnalysisRefs(a: RepositoryAnalysis): string[] {
   for (const list of [a.components, a.dataFlow, a.techStack, a.apis, a.dataModels, a.deployment, a.setup]) {
     for (const item of list) out.push(...item.claimRefs);
   }
+  for (const w of a.workflows ?? []) for (const h of w.hops) out.push(...h.claimRefs);
   return out;
 }
 
@@ -62,6 +77,7 @@ export function pruneAnalysisRefs(a: RepositoryAnalysis, known: ReadonlySet<stri
       dataModels: mapItems(a.dataModels),
       deployment: mapItems(a.deployment),
       setup: mapItems(a.setup),
+      workflows: (a.workflows ?? []).map((w) => ({ ...w, hops: mapItems(w.hops) })),
     },
     removed,
   };

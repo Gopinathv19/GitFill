@@ -58,6 +58,9 @@ export const repoSource = pgEnum("repo_source", ["imported", "created"]);
 
 export const chatRole = pgEnum("chat_role", ["user", "assistant"]);
 
+/** image = screenshots, photos, logos; document = text the deck can draw from; template = a .pptx whose theme becomes a brand. */
+export const uploadKind = pgEnum("upload_kind", ["image", "document", "template"]);
+
 /**
  * GitHub-authenticated users (or the dev stub user). The user's GitHub OAuth token is kept
  * encrypted (AES-256-GCM) so every repository read happens as that user, with their own
@@ -375,6 +378,37 @@ export const documents = pgTable(
   (t) => [index("documents_project_idx").on(t.projectId), index("documents_kind_idx").on(t.kind, t.createdAt)],
 );
 
+/**
+ * Files a user added to a workspace for GitFill to use: screenshots and logos shown on slides,
+ * documents (product notes, specs, results) quoted as evidence, and .pptx templates whose theme
+ * colours and fonts become a brand. Bytes live in artifact storage; text and descriptions here.
+ */
+export const uploads = pgTable(
+  "uploads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: uploadKind("kind").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    storageKey: text("storage_key").notNull(),
+    /** What an image shows (written by the vision model) or the user's own caption. */
+    description: text("description").notNull().default(""),
+    /** Text extracted from documents, capped; empty for images. */
+    extractedText: text("extracted_text").notNull().default(""),
+    /** Image size, template theme (colours, fonts) and similar facts. */
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("uploads_workspace_idx").on(t.workspaceId, t.createdAt)],
+);
+
 /** Personal API tokens for the VS Code extension. Only a SHA-256 hash is stored. */
 export const apiTokens = pgTable(
   "api_tokens",
@@ -398,4 +432,5 @@ export type JobStatus = (typeof jobStatus.enumValues)[number];
 export type JobKind = (typeof jobKind.enumValues)[number];
 export type DocumentKind = (typeof documentKind.enumValues)[number];
 export type ArtifactType = (typeof artifactType.enumValues)[number];
+export type UploadKind = (typeof uploadKind.enumValues)[number];
 export type ClaimStatus = (typeof claimStatus.enumValues)[number];

@@ -2,6 +2,9 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth/current";
 import { getDb } from "@/lib/db";
 import { fail, handleError, isUuid, ok } from "@/lib/http";
+import { resolveDeckRequest } from "@/lib/agent/planner";
+import { deckTypeDef } from "@/lib/presentation/deck-types";
+import { TEMPLATES } from "@/lib/presentation/themes";
 import { generateRequestSchema } from "@/lib/validation/request";
 import { ActionError, startPresentation } from "@/lib/workspaces/actions";
 import { addMessage } from "@/lib/workspaces/service";
@@ -20,7 +23,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { repositoryId, ...options } = bodySchema.parse(await req.json());
     const db = getDb();
     const { job, repo, request } = await startPresentation(db, user.id, id, repositoryId, options);
-    await addMessage(db, id, "user", `Generate a ${request.slideCount}-slide presentation of ${repo.owner}/${repo.name} for ${request.audience}. ${request.instructions}`.trim());
+    const resolved = resolveDeckRequest(request);
+    await addMessage(db, id, "user", `Generate a ${deckTypeDef(resolved.deckType).label.toLowerCase()} (about ${resolved.slideCount} slides, ${TEMPLATES[resolved.theme].name} template) of ${repo.owner}/${repo.name} for ${resolved.audience}. ${request.instructions}`.trim());
     await addMessage(db, id, "assistant", `Started analyzing ${repo.owner}/${repo.name}. Progress appears below.`, [job.id]);
     return ok({ jobId: job.id }, 202);
   } catch (err) {

@@ -1,29 +1,49 @@
 import { z } from "zod";
-import { THEMES } from "@/lib/presentation/spec";
+import { DECK_TYPES } from "@/lib/presentation/deck-types";
+import { brandSchema, THEMES } from "@/lib/presentation/spec";
 
 export const generateRequestSchema = z.object({
   repositoryUrl: z.string().trim().min(3).max(500),
   branch: z.string().trim().max(200).optional(),
-  audience: z.string().trim().min(2).max(120).default("Engineering team"),
-  purpose: z.string().trim().max(240).default("Explain the repository's architecture, components, data flow, technology stack and deployment."),
-  slideCount: z.number().int().min(4).max(16).default(10),
-  theme: z.enum(THEMES).default("midnight"),
+  /** What kind of deck: decides the story, density and page recipes. */
+  deckType: z.enum(DECK_TYPES).default("engineering_walkthrough"),
+  /** Empty means the deck type's default audience. */
+  audience: z.string().trim().max(120).default(""),
+  /** Empty means the deck type's own goal. */
+  purpose: z.string().trim().max(240).default(""),
+  slideCount: z.number().int().min(4).max(20).default(10),
+  /** Talk length; when set, the slide count follows from it and the deck type. */
+  minutes: z.number().int().min(1).max(90).optional(),
+  /** Template id; empty means the deck type's suggested template. */
+  theme: z.enum(THEMES).optional(),
+  brand: brandSchema.optional(),
   instructions: z.string().trim().max(2000).default(""),
   /** The reader brief agreed with the user in chat: who reads it, why, framing, must-cover and skip. */
   brief: z.string().trim().max(4000).default(""),
+  /** The user's answers to GitFill's questions about this deck, as question — answer lines. */
+  answers: z.string().trim().max(4000).default(""),
+  mustCover: z.array(z.string().trim().min(1).max(200)).max(12).default([]),
+  avoid: z.array(z.string().trim().min(1).max(200)).max(12).default([]),
+  /** Uploaded images and documents to use (ids from /api/workspaces/:id/uploads). */
+  assetIds: z.array(z.string().uuid()).max(30).default([]),
   outputs: z
     .object({
       pdf: z.boolean().default(true),
-      readme: z.boolean().default(true),
-      illustrations: z.boolean().default(true),
+      readme: z.boolean().default(false),
+      illustrations: z.boolean().default(false),
+      /** native = editable PowerPoint shapes and text; image = one picture per slide. */
+      pptx: z.enum(["native", "image"]).default("native"),
     })
-    .default({ pdf: true, readme: true, illustrations: true }),
+    .default({ pdf: true, readme: false, illustrations: false, pptx: "native" }),
 });
 
 export type GenerateRequest = z.infer<typeof generateRequestSchema>;
 
 export const reviseRequestSchema = z.object({
   instruction: z.string().trim().min(3).max(2000),
+  /** Switch template (and brand) without a model call; the instruction is then only the change summary. */
+  theme: z.enum(THEMES).optional(),
+  brand: brandSchema.nullable().optional(),
 });
 
 export type ReviseRequest = z.infer<typeof reviseRequestSchema>;

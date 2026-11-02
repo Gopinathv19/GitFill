@@ -1,11 +1,14 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Bot, GitCompareArrows } from "lucide-react";
+import { ArrowUp, Bot, FileText, GitCompareArrows, Paperclip } from "lucide-react";
+import { UploadZone } from "@/components/shared/upload-zone";
 import { Button } from "@/components/ui/button";
 import { ReuseDialog } from "./reuse-dialog";
 import type { Activity } from "@/lib/client/activity";
 import { api, ApiError, errorMessage } from "@/lib/client/api";
+import { formatAttachments, parseAttachments } from "@/lib/client/attachments";
+import { toAttachment, type UploadView } from "@/lib/client/uploads";
 import { postStream } from "@/lib/client/stream";
 import { refreshSessions, takePendingMessage } from "@/lib/client/sessions-store";
 import { finishTurn, newTurn, reduceTurn, stepCount, type Turn, type TurnEvent } from "@/lib/client/turn";
@@ -133,13 +136,11 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
           )}
           {messages?.map((m, i) =>
             m.role === "user" ? (
-              <div key={m.id} className="flex justify-end">
-                <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2 text-sm">{m.content}</div>
-              </div>
+              <UserMessage key={m.id} content={m.content} />
             ) : (
               <div key={m.id} className="flex flex-col gap-3">
                 {traces[m.id] ? <AgentTurn turn={traces[m.id]!} /> : null}
-                <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} answerable={i === messages.length - 1} />
+                <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} answerable={i === messages.length - 1} workspaceId={workspaceId} />
                 {m.jobIds.map((id) => (
                   <div key={id} className="w-full min-w-72">
                     <JobCard jobId={id} onFinished={onActivity} />
@@ -168,7 +169,7 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
             </div>
           )}
           {error && <p role="alert" className="mb-2 text-xs text-destructive">{error}</p>}
-          <Composer onSend={submit} sending={sending} />
+          <Composer onSend={submit} sending={sending} workspaceId={workspaceId} />
         </div>
       </div>
     </div>
@@ -179,16 +180,30 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
  * The message box. It owns the text it is typing, so a keystroke re-renders only this component,
  * not the whole conversation (which re-parsed every answer's Markdown on each key).
  */
-const Composer = memo(function Composer({ onSend, sending }: { onSend: (text: string) => Promise<boolean>; sending: boolean }) {
+const Composer = memo(function Composer({ onSend, sending, workspaceId }: { onSend: (text: string) => Promise<boolean>; sending: boolean; workspaceId: string }) {
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<UploadView[]>([]);
+  const [attaching, setAttaching] = useState(false);
   async function submit() {
     const value = text;
-    if (!value.trim() || sending) return;
+    if ((!value.trim() && !files.length) || sending) return;
+    const attached = files;
     setText("");
-    if (!(await onSend(value))) setText(value);
+    setFiles([]);
+    setAttaching(false);
+    const message = (value.trim() || "I attached these files.") + formatAttachments(attached.map(toAttachment));
+    if (!(await onSend(message))) {
+      setText(value);
+      setFiles(attached);
+    }
   }
   return (
     <>
+      {attaching && (
+        <div className="mb-2 rounded-lg border bg-muted/20 p-2">
+          <UploadZone compact workspaceId={workspaceId} uploads={files} onChange={setFiles} hint="Screenshots, a logo, a .pptx template or documents for GitFill to use" />
+        </div>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -196,6 +211,9 @@ const Composer = memo(function Composer({ onSend, sending }: { onSend: (text: st
         }}
         className="flex items-end gap-2 rounded-lg border bg-background p-2 focus-within:ring-2 focus-within:ring-ring"
       >
+        <Button type="button" size="icon" variant="ghost" className="size-9 shrink-0" aria-label="Attach files" aria-pressed={attaching} onClick={() => setAttaching((a) => !a)}>
+          <Paperclip />
+        </Button>
         <textarea
           aria-label="Message GitFill"
           value={text}
@@ -210,7 +228,7 @@ const Composer = memo(function Composer({ onSend, sending }: { onSend: (text: st
           placeholder="Ask a follow-up, or request a handbook, comparison or presentation…"
           className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <Button type="submit" size="icon" className="size-9 shrink-0" disabled={sending || !text.trim()} aria-label="Send">
+        <Button type="submit" size="icon" className="size-9 shrink-0" disabled={sending || (!text.trim() && !files.length)} aria-label="Send">
           <ArrowUp />
         </Button>
       </form>
@@ -219,3 +237,27 @@ const Composer = memo(function Composer({ onSend, sending }: { onSend: (text: st
   );
 });
 
+/** A user message; attached files show as chips (images as thumbnails) under the text. */
+const UserMessage = memo(function UserMessage({ content }: { content: string }) {
+  const { text, attachments } = parseAttachments(content);
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2 text-sm">{text}</div>
+      {attachments.length > 0 && (
+        <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+          {attachments.map((a) => (
+            <a key={a.id} href={`/api/uploads/${a.id}`} target="_blank" rel="noreferrer" title={a.description || a.filename} className="flex items-center gap-1.5 rounded-md border bg-background px-1.5 py-1 text-xs hover:bg-accent">
+              {a.kind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element -- authenticated API route
+                <img src={`/api/uploads/${a.id}`} alt="" className="size-6 rounded object-cover" />
+              ) : (
+                <FileText className="size-4 text-muted-foreground" />
+              )}
+              <span className="max-w-40 truncate">{a.filename}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});

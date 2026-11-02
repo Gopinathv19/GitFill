@@ -22,7 +22,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const user = await requireUser();
     const { id } = await params;
     if (!isUuid(id)) return fail(400, "invalid_id", "Invalid session id.");
-    const { message } = z.object({ message: z.string().trim().min(1).max(4000) }).parse(await req.json());
+    const { message } = z.object({ message: z.string().trim().min(1).max(12_000) }).parse(await req.json());
     const db = getDb();
     const session = await assertSession(db, user.id, id);
     const userMessage = await addMessage(db, session.workspaceId, "user", message, [], id);

@@ -5,19 +5,21 @@ import { generateIllustration } from "@/lib/ai/images";
 import { modelFor } from "@/lib/ai/models";
 import type { RepositoryAnalysis } from "@/lib/agent/analysis-schema";
 import { analyzeRepository } from "@/lib/agent/analyze";
-import { applyRevision, deckEvidence, planDeck, planRevision } from "@/lib/agent/planner";
+import { applyRevision, deckBrief, deckEvidence, planDeck, planRevision } from "@/lib/agent/planner";
 import { githubClientForJob } from "@/lib/auth/github-token";
 import { ingestGitHubRepository } from "@/lib/connectors/github/ingest";
 import type { SourceSnapshot } from "@/lib/connectors/types";
 import type { Database } from "@/lib/db";
-import { artifacts, deckVersions, decks, evidenceClaims, generationJobs, repositorySnapshots, type ArtifactType } from "@/lib/db/schema";
+import { artifacts, deckVersions, decks, evidenceClaims, generationJobs, projects, repositorySnapshots, type ArtifactType } from "@/lib/db/schema";
 import { buildEvidenceReport } from "@/lib/documents/evidence-report";
 import { generateReadme } from "@/lib/documents/readme";
 import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
 import { parseDeckSpec } from "@/lib/presentation/legacy";
+import { codeFacts, repositoryPaths, type MaterialText } from "@/lib/presentation/evidence";
 import { withLabels } from "@/lib/presentation/labels";
-import { deckSpecSchema, normalizeDeckSpec, type DeckSpec } from "@/lib/presentation/spec";
+import { brandSchema, deckSpecSchema, normalizeDeckSpec, type Brand, type DeckSpec } from "@/lib/presentation/spec";
+import { imageDataUris, toMaterials, uploadsByIds, type UploadRow } from "@/lib/uploads/service";
 import { ArtifactMissingError, getStorage, safeFilename } from "@/lib/storage";
 import { generateRequestSchema, reviseRequestSchema } from "@/lib/validation/request";
 import { DbRecorder } from "./db-recorder";
@@ -37,6 +39,8 @@ export interface SnapshotSummary {
   inventory: Array<{ path: string; sizeBytes: number; selected: boolean; skipReason?: string }>;
   danglingRefs: string[];
   agent: { turns: number; toolCalls: number };
+  /** Routes, directories and module dependencies computed from the source (codeFacts). */
+  codeFacts?: string;
 }
 
 export async function runJob(db: Database, job: Job): Promise<void> {
@@ -111,8 +115,17 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   await ingestEvent.succeed({ repository: snapshot.displayName, commit: snapshot.version.slice(0, 7), files: snapshot.stats.selectedFiles, tree: snapshot.stats.totalEntries });
   await db.update(generationJobs).set({ branch: snapshot.branch, commitSha: snapshot.version }).where(eq(generationJobs.id, job.id));
 
-  // 2. Analysis agent: real tool loop with verified evidence.
-  const analysis = await analyzeRepository({ client, snapshot, userRequest: [request.brief ? `Reader brief agreed with the user:\n${request.brief}` : "", `${request.purpose} Audience: ${request.audience}. ${request.instructions}`].filter(Boolean).join("\n"), recorder });
+  // What the user uploaded for this deck: screenshots to show, documents to draw from, a template or logo.
+  const workspaceId = (await db.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, job.projectId)))[0]?.workspaceId;
+  const uploadRows = workspaceId ? await uploadsByIds(db, workspaceId, [...new Set([...request.assetIds, ...(request.brand?.logoAssetId ? [request.brand.logoAssetId] : [])])]) : [];
+  const materialRows = uploadRows.filter((u) => request.assetIds.includes(u.id) && u.kind !== "template");
+  const materials = toMaterials(materialRows);
+  const brand = resolveBrand(request.brand, uploadRows.filter((u) => request.assetIds.includes(u.id)));
+
+  // 2. Analysis agent: real tool loop with verified evidence, steered by what the deck is for.
+  const analysis = await analyzeRepository({ client, snapshot, userRequest: deckBrief(request), recorder });
+  const facts = codeFacts(analysis.context);
+  const paths = repositoryPaths(analysis.context);
 
   const summary: SnapshotSummary = {
     displayName: snapshot.displayName,
@@ -123,6 +136,7 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
     inventory: snapshot.inventory.slice(0, 5000),
     danglingRefs: analysis.danglingRefs,
     agent: { turns: analysis.turns, toolCalls: analysis.toolCalls },
+    codeFacts: facts,
   };
   const [snap] = await db
     .insert(repositorySnapshots)
@@ -156,15 +170,19 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
 
   // 3. Planner: Muse Wonder outlines the deck, then each page is composed in parallel.
   await recorder.setStage("planning_presentation");
-  const { spec } = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request, recorder });
+  const planned = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request: { ...request, brand }, recorder, facts, materials, paths });
+  const spec = planned.spec;
 
   const [deck] = await db.insert(decks).values({ projectId: job.projectId, snapshotId: snap!.id, title: spec.title }).returning();
   const version = 1;
   const prefix = `decks/${deck!.id}/v${version}`;
 
-  // 4. Cover artwork (Muse Image), only when the cover asks for it. Failures never block the deck.
+  // 4. The deck keeps its own copy of every image it may show, so deleting an upload never breaks it.
+  //    Cover artwork (Muse Image) only when asked for and the cover wants it. Failures never block the deck.
   await recorder.setStage("generating_presentation");
-  const assets = request.outputs.illustrations ? await makeIllustrations(spec, prefix, recorder) : {};
+  const assets: Record<string, string> = await copyImages(uploadRows.filter((u) => u.kind === "image"), `decks/${deck!.id}`);
+  if (request.outputs.illustrations) Object.assign(assets, await makeIllustrations(spec, prefix, recorder));
+  const images = await assetImages(assets);
 
   // 5. Render → check → repair.
   const labeled = withLabels(spec, { repository: snapshot.displayName, branch: snapshot.branch, sha: snapshot.version });
@@ -173,7 +191,9 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
     ...labeled.render,
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
-    evidence: deckEvidence({ snapshot, analysis: analysis.analysis, claims: analysis.claims }),
+    images,
+    pptxMode: request.outputs.pptx,
+    evidence: deckEvidence({ snapshot, analysis: analysis.analysis, claims: analysis.claims, facts, materials }),
     client,
     recorder,
   });
@@ -195,7 +215,8 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
 }
 
 async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: MuseClient) {
-  const { instruction } = reviseRequestSchema.parse(job.options);
+  const options = reviseRequestSchema.parse(job.options);
+  const { instruction } = options;
   if (!job.deckId) throw new Error("Revision job has no deck.");
   await recorder.setStage("planning_presentation");
 
@@ -209,30 +230,39 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   // Labels are filled in first so the planner sees them as editable content, like the slides.
   const current = withLabels(parseDeckSpec(latest.spec), repo).spec;
   const summary = snap.summary as SnapshotSummary;
+  const materials = await revisionMaterials(db, deck.projectId, current);
   const evidence = summary?.analysis
     ? deckEvidence({
         snapshot: { displayName: `${snap.owner}/${snap.name}`, branch: snap.branch, version: snap.commitSha, stats: summary.stats, metadata: summary.metadata },
         analysis: summary.analysis,
         claims,
+        facts: summary.codeFacts,
+        materials,
       })
     : undefined;
+  const paths = summary?.inventory ? new Set(summary.inventory.map((i) => i.path)) : undefined;
 
-  const plan = await planRevision({ client, spec: current, instruction, claims, evidence, recorder });
+  // A template switch is applied directly: no model call, every slide kept as it is.
+  const plan = options.theme
+    ? { summary: instruction, operations: [{ op: "set_theme" as const, theme: options.theme }] }
+    : await planRevision({ client, spec: current, instruction, claims, evidence, recorder });
   // Nothing to change: report why instead of saving an identical version.
   if (!plan.operations.length) throw new RevisionError(`This revision changed nothing: ${plan.summary}`);
   const applied = applyRevision(current, plan);
-  const { spec } = normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)));
+  if (options.theme && options.brand !== undefined) applied.spec = { ...applied.spec, brand: options.brand ?? undefined };
+  const { spec } = normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)), { paths });
 
   const version = latest.version + 1;
   const prefix = `decks/${deck.id}/v${version}`;
   const assets = (latest.assets ?? {}) as Record<string, string>;
-  const themeChanged = spec.theme !== current.theme;
+  const themeChanged = spec.theme !== current.theme || JSON.stringify(spec.brand ?? null) !== JSON.stringify(current.brand ?? null);
   const labeled = withLabels(spec, repo);
   const built = await buildValidatedDeck({
     spec: labeled.spec,
     ...labeled.render,
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
+    images: await assetImages(assets),
     evidence,
     client,
     recorder,
@@ -339,8 +369,65 @@ class RevisionError extends Error {
   override name = "RevisionError";
 }
 
+/** Cover artwork by slide id; uploaded images are stored under "asset:<upload id>" in the same map. */
 function illustrationPaths(assets: Record<string, string>): Map<string, string> {
-  return new Map(Object.entries(assets).map(([slideId, key]) => [slideId, getStorage().localPath(key)]));
+  return new Map(
+    Object.entries(assets)
+      .filter(([k]) => !k.startsWith(ASSET_PREFIX))
+      .map(([slideId, key]) => [slideId, getStorage().localPath(key)]),
+  );
+}
+
+const ASSET_PREFIX = "asset:";
+
+/** Copies uploaded images into the deck's storage; returns "asset:<upload id>" → storage key. */
+async function copyImages(rows: UploadRow[], prefix: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const storage = getStorage();
+  for (const r of rows) {
+    const ext = r.storageKey.split(".").pop() ?? "png";
+    const key = `${prefix}/assets/${r.id}.${ext}`;
+    try {
+      await storage.put(key, await storage.get(r.storageKey));
+      out[`${ASSET_PREFIX}${r.id}`] = key;
+    } catch (err) {
+      if (!(err instanceof ArtifactMissingError)) throw err;
+    }
+  }
+  return out;
+}
+
+/** The deck's image copies as data URIs keyed by upload id, for the renderer. */
+async function assetImages(assets: Record<string, string>): Promise<Map<string, string>> {
+  const rows = Object.entries(assets)
+    .filter(([k]) => k.startsWith(ASSET_PREFIX))
+    .map(([k, key]) => ({ id: k.slice(ASSET_PREFIX.length), kind: "image" as const, mimeType: mimeOf(key), storageKey: key }));
+  return imageDataUris(rows);
+}
+
+function mimeOf(key: string): string {
+  const ext = key.split(".").pop()?.toLowerCase();
+  return ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : ext === "webp" ? "image/webp" : "image/png";
+}
+
+/**
+ * The deck's brand: what the user set, on top of the theme of a .pptx template they uploaded.
+ * Invalid values from a template are dropped rather than failing the deck.
+ */
+function resolveBrand(requested: Brand | undefined, rows: UploadRow[]): Brand | undefined {
+  const template = rows.find((u) => u.kind === "template");
+  const fromTemplate = template ? brandSchema.safeParse((template.metadata as { brand?: unknown }).brand ?? {}) : null;
+  const merged = { ...(fromTemplate?.success ? fromTemplate.data : {}), ...(requested ?? {}) };
+  return Object.keys(merged).length ? merged : undefined;
+}
+
+/** Material a deck was made with, re-read for a revision; deleted uploads keep their description only. */
+async function revisionMaterials(db: Database, projectId: string, spec: DeckSpec): Promise<MaterialText[]> {
+  if (!spec.materials.length) return [];
+  const workspaceId = (await db.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId)))[0]?.workspaceId;
+  const rows = workspaceId ? await uploadsByIds(db, workspaceId, spec.materials.map((m) => m.id)) : [];
+  const text = new Map(rows.map((r) => [r.id, r.extractedText]));
+  return spec.materials.map((material) => ({ material, text: text.get(material.id) ?? "" }));
 }
 
 function toClaim(row: typeof evidenceClaims.$inferSelect): Claim {

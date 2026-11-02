@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import type { MuseClient } from "@/lib/ai/client";
 import { modelFor } from "@/lib/ai/models";
-import { REPAIR_SYSTEM_PROMPT } from "@/lib/ai/prompts";
+import { repairPrompt } from "@/lib/ai/prompts";
 import type { RunRecorder } from "@/lib/agent/recorder";
 import type { SlideIssue } from "@/lib/validation/checks";
+import type { DeckType } from "./deck-types";
 import { pageBlocks, slideSchema, type Slide } from "./spec";
 
 export interface RepairAction {
@@ -54,6 +55,7 @@ export async function repairWithModel(opts: {
   pngPath?: string;
   evidence?: string;
   recorder: RunRecorder;
+  deckType?: DeckType;
 }): Promise<{ slide: Slide; action: RepairAction }> {
   const { slide } = opts;
   const event = await opts.recorder.start("step", "repair_slide", { slide: slide.id, issues: opts.issues.map((i) => i.code) }, modelFor("repairer"));
@@ -79,7 +81,7 @@ export async function repairWithModel(opts: {
       correctionAttempts: 2,
       maxTokens: 16_000,
       messages: [
-        { role: "system", content: REPAIR_SYSTEM_PROMPT },
+        { role: "system", content: repairPrompt(opts.deckType ?? "engineering_walkthrough") },
         { role: "user", content },
       ],
     });
