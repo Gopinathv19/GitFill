@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileCheck2, Loader2, ShieldCheck } from "lucide-react";
 import { ActivityTimeline } from "@/components/jobs/activity-timeline";
 import { ArtifactImage } from "@/components/shared/artifact-image";
+import { DictateButton } from "@/components/shared/dictate-button";
 import { JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/components/shared/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -450,6 +451,7 @@ function RevisionBox({ deckId, theme, onStarted }: { deckId: string; theme?: str
           placeholder="e.g. Make the architecture slide easier to understand and add a slide on the database design."
           className="min-h-[3.5rem] flex-1"
         />
+        <DictateButton className="self-end" onText={(spoken) => setText((t) => (t.trim() ? `${t.trimEnd()} ${spoken}` : spoken))} />
         <Button type="submit" disabled={submitting || text.trim().length < 3} className="sm:w-44">
           {submitting ? <Spinner /> : null}
           Apply revision

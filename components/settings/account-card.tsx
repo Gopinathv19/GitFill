@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api, errorMessage } from "@/lib/client/api";
 import type { GitHubConnection, SessionUser } from "@/lib/client/types";
+import type { GitHubAppStatus } from "@/lib/connectors/github/app";
 import { getInitials, timeAgo } from "@/lib/utils";
 
 /** The signed-in account and its GitHub connection (repositories are read as this account). */
@@ -17,7 +18,15 @@ export function AccountCard({ user, oauthConfigured }: { user: SessionUser; oaut
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = () => api<{ github: GitHubConnection }>("/api/auth/me").then((r) => setState(r.github), (e: Error) => setError(e.message));
+  const [app, setApp] = useState<GitHubAppStatus | null>(null);
+  const load = () =>
+    api<{ github: GitHubConnection; githubApp: GitHubAppStatus }>("/api/auth/me").then(
+      (r) => {
+        setState(r.github);
+        setApp(r.githubApp);
+      },
+      (e: Error) => setError(e.message),
+    );
   useEffect(() => {
     void load();
     const flag = new URLSearchParams(window.location.search).get("github");
@@ -89,6 +98,29 @@ export function AccountCard({ user, oauthConfigured }: { user: SessionUser; oaut
         )}
         {(notice || error) && <p className={`w-full text-sm ${error ? "text-destructive" : "text-muted-foreground"}`}>{error ?? notice}</p>}
       </div>
+
+      {app && (
+        <div className="space-y-1 p-5 text-sm">
+          <p className="font-medium">Pull requests are opened as {app.state === "configured" ? (app.botName ?? "the GitFill GitHub App") : state?.login ? `@${state.login} (you)` : "you"}</p>
+          {app.state === "configured" ? (
+            <p className="text-muted-foreground">
+              GitFill&apos;s GitHub App writes README, docs and spec pull requests; you still need push access to the repository.
+              {app.installUrl ? (
+                <>
+                  {" "}
+                  <a href={app.installUrl} target="_blank" rel="noreferrer" className="underline">Install it on more repositories</a>.
+                </>
+              ) : null}
+            </p>
+          ) : app.state === "invalid_key" ? (
+            <p className="text-destructive">The GitHub App is set up but its private key does not work ({app.detail}). Check GITHUB_APP_PRIVATE_KEY.</p>
+          ) : (
+            <p className="text-muted-foreground">
+              No GitHub App is set up, so pull requests use your own GitHub token and show you as the author. A GitHub sign-in (OAuth) app can only ever act as the signed-in user; to open them as a bot, the server operator sets GITHUB_APP_ID and its private key.
+            </p>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

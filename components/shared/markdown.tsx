@@ -51,11 +51,20 @@ const CHIP_TONE: Record<EvidenceStatus, string> = {
   unverified: "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-400",
 };
 
-function MarkdownBlock({ children, evidence }: { children: string; evidence?: EvidenceChips }) {
+function MarkdownBlock({ children, evidence, resolveImage }: { children: string; evidence?: EvidenceChips; resolveImage?: (src: string) => string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
+        ...(resolveImage
+          ? {
+              img({ src, alt }) {
+                const url = typeof src === "string" ? resolveImage(src) : "";
+                // eslint-disable-next-line @next/next/no-img-element -- README images come from the document's files or the repository
+                return url ? <img src={url} alt={alt ?? ""} className="my-1 inline-block max-w-full rounded-md align-middle" /> : null;
+              },
+            }
+          : {}),
         code({ className: cls, children: code, ...props }) {
           const match = /language-(\w+)/.exec(cls ?? "");
           const text = String(code).replace(/\n$/, "");
@@ -195,3 +204,88 @@ export function Mermaid({ chart, className }: { chart: string; className?: strin
   if (!svg) return <div className={cn("h-32 animate-pulse rounded-md bg-muted/50", className)} />;
   return <div ref={ref} className={cn("gf-mermaid overflow-x-auto rounded-md border bg-card p-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full", className)} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
+
+const ALERT_STYLE: Record<string, { label: string; tone: string }> = {
+  NOTE: { label: "Note", tone: "border-sky-500 text-sky-700 dark:text-sky-400" },
+  TIP: { label: "Tip", tone: "border-emerald-500 text-emerald-700 dark:text-emerald-400" },
+  IMPORTANT: { label: "Important", tone: "border-violet-500 text-violet-700 dark:text-violet-400" },
+  WARNING: { label: "Warning", tone: "border-amber-500 text-amber-700 dark:text-amber-400" },
+  CAUTION: { label: "Caution", tone: "border-rose-500 text-rose-700 dark:text-rose-400" },
+};
+
+type ReadmeSegment = { kind: "md" | "center"; md: string } | { kind: "alert"; type: string; md: string };
+
+/** GitHub README HTML GitFill understands, as Markdown: <img>, <a>, <br>; every other tag is dropped. */
+function readmeHtmlToMarkdown(html: string): string {
+  return html
+    .replace(/<img\b([^>]*)>/gi, (_, attrs: string) => {
+      const src = /\bsrc=["']([^"']+)["']/i.exec(attrs)?.[1];
+      const alt = /\balt=["']([^"']*)["']/i.exec(attrs)?.[1] ?? "";
+      return src ? `![${alt.replace(/[\[\]]/g, "")}](${src.replace(/\s/g, "%20")})` : "";
+    })
+    .replace(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, label: string) => `[${label.trim()}](${href})`)
+    .replace(/<br\s*\/?>/gi, "  \n")
+    .replace(/<\/?(?:p|div|span|picture|source|sup|sub|b|strong|em|i|center|h[1-6])\b[^>]*>/gi, "");
+}
+
+/** Splits a README into centered blocks, GitHub alerts and plain Markdown. */
+export function readmeSegments(markdown: string): ReadmeSegment[] {
+  const out: ReadmeSegment[] = [];
+  const centered = /<(p|div)\s+align=["']center["'][^>]*>([\s\S]*?)<\/\1>/gi;
+  let last = 0;
+  const pushPlain = (text: string) => {
+    // GitHub alerts: a blockquote whose first line is [!TIP], [!NOTE], …
+    const lines = text.split("\n");
+    let buf: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i.exec(lines[i]!);
+      if (!m) {
+        buf.push(lines[i]!);
+        continue;
+      }
+      if (buf.join("").trim()) out.push({ kind: "md", md: readmeHtmlToMarkdown(buf.join("\n")) });
+      buf = [];
+      const body: string[] = [];
+      while (i + 1 < lines.length && /^>/.test(lines[i + 1]!)) body.push(lines[++i]!.replace(/^>\s?/, ""));
+      out.push({ kind: "alert", type: m[1]!.toUpperCase(), md: readmeHtmlToMarkdown(body.join("\n")) });
+    }
+    if (buf.join("").trim()) out.push({ kind: "md", md: readmeHtmlToMarkdown(buf.join("\n")) });
+  };
+  for (const m of markdown.matchAll(centered)) {
+    pushPlain(markdown.slice(last, m.index));
+    out.push({ kind: "center", md: readmeHtmlToMarkdown(m[2]!.trim()) });
+    last = m.index! + m[0].length;
+  }
+  pushPlain(markdown.slice(last));
+  return out;
+}
+
+/**
+ * A README as GitHub shows it: centered header blocks with banner and badges, <img> tags, GitHub
+ * alerts and images resolved through `resolveImage` (the document's own files or the repository).
+ * Raw HTML is still never rendered: the tags above are converted to Markdown first.
+ */
+export const ReadmeMarkdown = memo(function ReadmeMarkdown({ children, className, resolveImage }: { children: string; className?: string; resolveImage: (src: string) => string }) {
+  const segments = readmeSegments(children.replace(/<sub>([\s\S]*?)<\/sub>/g, (_, inner: string) => `*${inner.trim()}*`));
+  return (
+    <div className={cn("gf-prose", className)}>
+      {segments.map((seg, i) =>
+        seg.kind === "center" ? (
+          <div key={i} className="my-3 text-center [&_p]:my-1.5">
+            <MarkdownBlock resolveImage={resolveImage}>{seg.md}</MarkdownBlock>
+          </div>
+        ) : seg.kind === "alert" ? (
+          <div key={i} className={cn("my-3 border-l-4 bg-muted/40 py-2 pl-4 pr-3", ALERT_STYLE[seg.type]!.tone)}>
+            <p className="mb-1 text-sm font-semibold">{ALERT_STYLE[seg.type]!.label}</p>
+            <div className="text-foreground">
+              <MarkdownBlock resolveImage={resolveImage}>{seg.md}</MarkdownBlock>
+            </div>
+          </div>
+        ) : (
+          <MarkdownBlock key={i} resolveImage={resolveImage}>{seg.md}</MarkdownBlock>
+        ),
+      )}
+    </div>
+  );
+});
+

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, FileSearch, GitBranch, GitCompareArrows, MessageSquareText, Search, Sparkles } from "lucide-react";
+import { BookOpen, FileSearch, FileText, GitBranch, GitCompareArrows, Lightbulb, MessageSquareText, Search, Sparkles } from "lucide-react";
 import { DOCUMENT_KIND_LABELS } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,6 +18,8 @@ const KINDS: Record<DocumentKind, { icon: typeof BookOpen; tone: string; plural:
   commit_report: { icon: GitCompareArrows, tone: "bg-sky-500/10 text-sky-700 dark:text-sky-400", plural: "Commit reports" },
   implementation_brief: { icon: FileSearch, tone: "bg-violet-500/10 text-violet-700 dark:text-violet-400", plural: "Implementation briefs" },
   explanation: { icon: MessageSquareText, tone: "bg-amber-500/10 text-amber-700 dark:text-amber-400", plural: "Explanations" },
+  readme: { icon: FileText, tone: "bg-rose-500/10 text-rose-700 dark:text-rose-400", plural: "READMEs" },
+  brainstorm: { icon: Lightbulb, tone: "bg-teal-500/10 text-teal-700 dark:text-teal-400", plural: "Brainstorm specs" },
 };
 
 type Filter = "all" | DocumentKind;

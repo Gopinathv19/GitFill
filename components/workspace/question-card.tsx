@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { TemplateGallery } from "@/components/presentation/template-gallery";
+import { DictateButton } from "@/components/shared/dictate-button";
 import { UploadZone } from "@/components/shared/upload-zone";
 import { Button } from "@/components/ui/button";
 import { formatAnswers, type AskUser } from "@/lib/client/questions";
@@ -76,15 +77,24 @@ export function QuestionCard({ ask, onAnswer, workspaceId }: { ask: AskUser; onA
                   </button>
                 );
               })}
-              <input
-                type="text"
-                disabled={disabled}
-                value={answers[qi]!.other}
-                onChange={(e) => setAnswers((all) => all.map((a, i) => (i === qi ? { ...a, other: e.target.value } : a)))}
-                placeholder="Or in your own words…"
-                aria-label={`Your own answer to: ${q.question}`}
-                className="rounded-md border bg-background px-2.5 py-1.5 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-70"
-              />
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  disabled={disabled}
+                  value={answers[qi]!.other}
+                  onChange={(e) => setAnswers((all) => all.map((a, i) => (i === qi ? { ...a, other: e.target.value } : a)))}
+                  placeholder="Or in your own words…"
+                  aria-label={`Your own answer to: ${q.question}`}
+                  className="min-w-0 flex-1 rounded-md border bg-background px-2.5 py-1.5 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-70"
+                />
+                {!disabled && (
+                  <DictateButton
+                    size="sm"
+                    workspaceId={workspaceId}
+                    onText={(spoken) => setAnswers((all) => all.map((a, i) => (i === qi ? { ...a, other: a.other.trim() ? `${a.other.trimEnd()} ${spoken}` : spoken } : a)))}
+                  />
+                )}
+              </div>
             </div>
           </li>
         ))}

@@ -31,6 +31,8 @@ const envSchema = z.object({
   GITHUB_APP_ID: z.string().regex(/^\d+$/).optional(),
   /** The app's private key (PEM). Newlines may be written as \n on one line. */
   GITHUB_APP_PRIVATE_KEY: z.string().min(100).optional(),
+  /** Or the path to the downloaded .pem file, used as it is. */
+  GITHUB_APP_PRIVATE_KEY_PATH: z.string().min(1).optional(),
   /** The app's URL name (github.com/apps/<slug>), for install links. */
   GITHUB_APP_SLUG: z.string().regex(/^[a-z0-9-]+$/).optional(),
   /** Key that encrypts users' GitHub tokens at rest (32+ chars, e.g. `openssl rand -hex 32`). Required in production. */

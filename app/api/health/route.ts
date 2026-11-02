@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { env, inlineWorkerEnabled, memoraConfigured } from "@/lib/config/env";
+import { githubAppStatus } from "@/lib/connectors/github/app";
 import { MemoraClient } from "@/lib/memora/client";
 import { getDb } from "@/lib/db";
 import { ok } from "@/lib/http";
@@ -25,5 +26,5 @@ export async function GET() {
       memora = "unreachable";
     }
   }
-  return ok({ database, modelApiKey: Boolean(e.MODEL_API_KEY), githubToken: Boolean(e.GITHUB_TOKEN), contributorTier: e.MUSE_USE_CONTRIBUTOR === "true", memora, inlineWorker: inlineWorkerEnabled() });
+  return ok({ database, modelApiKey: Boolean(e.MODEL_API_KEY), githubToken: Boolean(e.GITHUB_TOKEN), githubApp: githubAppStatus().state, contributorTier: e.MUSE_USE_CONTRIBUTOR === "true", memora, inlineWorker: inlineWorkerEnabled() });
 }

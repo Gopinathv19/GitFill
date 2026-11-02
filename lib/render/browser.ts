@@ -211,3 +211,42 @@ function measureScript() {
   }
   return out;
 }
+
+/**
+ * Text that does not fit in standalone SVG images (README banners and diagrams): diagram labels
+ * spilling out of their boxes, and text marked data-max-x running past that x. Returns the
+ * offending strings per image.
+ */
+export async function checkSvgText(svgs: string[]): Promise<string[][]> {
+  const b = await browser();
+  const context = await b.newContext({ viewport: { width: 1400, height: 900 } });
+  try {
+    const page = await context.newPage();
+    await page.route("**/*", (route) => (route.request().url().startsWith("data:") ? route.continue() : route.abort()));
+    await page.setContent(`<!doctype html><html><body>${svgs.map((s, i) => `<div data-i="${i}">${s}</div>`).join("")}</body></html>`, { waitUntil: "load" });
+    return await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-i]")).map((holder) => {
+        const out: string[] = [];
+        for (const t of Array.from(holder.querySelectorAll<SVGTextElement>("text[data-max-x]"))) {
+          const bb = t.getBBox();
+          if (bb.x + bb.width > Number(t.dataset.maxX) + 1) out.push((t.textContent ?? "").slice(0, 60));
+        }
+        for (const g of Array.from(holder.querySelectorAll<SVGGElement>("g.n"))) {
+          const shape = g.querySelector<SVGGraphicsElement>("rect, polygon");
+          if (!shape) continue;
+          const sb = shape.getBBox();
+          const diamond = g.classList.contains("dia");
+          for (const t of Array.from(g.querySelectorAll<SVGTextElement>("text"))) {
+            const tb = t.getBBox();
+            const bad = diamond ? tb.width > sb.width * 0.74 : tb.x < sb.x - 1 || tb.x + tb.width > sb.x + sb.width + 1;
+            if (bad) out.push((t.textContent ?? "").slice(0, 60));
+          }
+        }
+        return out;
+      }),
+    );
+  } finally {
+    await context.close();
+  }
+}
+

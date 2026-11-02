@@ -7,6 +7,7 @@ import type { Database } from "@/lib/db";
 import { DECK_TYPES, DECK_TYPE_DEFS } from "@/lib/presentation/deck-types";
 import { THEMES } from "@/lib/presentation/spec";
 import { describeTemplates } from "@/lib/presentation/themes";
+import { README_TEMPLATE_IDS, README_TEMPLATES, SECTIONS } from "@/lib/readme/templates";
 import { HANDBOOK_AUDIENCES, REUSE_KINDS } from "@/lib/understanding/schemas";
 import { ActionError, askRepository, openPullRequest, openWorkspaceRepository, revisePresentation, startBrainstorm, startReadme, startVideo, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
 import { getWorkspace, listMessages } from "@/lib/workspaces/service";
@@ -52,6 +53,11 @@ ${describeTemplates()}
 - Unless the user already attached files, include one question with kind "upload" offering to take screenshots, a logo, a .pptx template (its colours and fonts become the deck's brand) or documents (product notes, results, roadmap); options name what would help this deck (e.g. "Screenshots of the dashboard").
 - Files the user attached appear in their messages as an \`attachments\` block with upload ids. Pass the ids of images and documents to use as asset_ids; a template's id too (its brand is applied).
 - Put must-cover topics and things to skip from the answers into must_cover and avoid, and everything else they told you into brief.
+
+READMEs
+- Unless the user already said how they want it, ask (one round, ask_user) which README template fits (options are the templates below, the one that suits the repository first, with the id in the option's detail), which sections to add or drop from it (multiple: true, name real parts of the repository), and offer an upload question (kind "upload") for screenshots or a logo. Templates: ${README_TEMPLATE_IDS.map((id) => `${id}: ${README_TEMPLATES[id].name} — ${README_TEMPLATES[id].description}`).join("; ")}.
+- Section ids you can pass: ${SECTIONS.map((x) => x.id).join(", ")}, or "custom" with a title and note. If the user pastes a README they like, pass it as reference.
+- Pass the answers to start_readme: template, sections, banner/diagrams/badges, asset_ids from attachments, links, and their words as answers.
 
 Brainstorming
 When the user wants to think through a feature or change for a repository, be a sharp engineering partner: look at the relevant code first (list_files, grep, read_file), then discuss options and trade-offs grounded in what the code does today, ask focused questions one round at a time, and keep track of what has been decided. Do not write code. When they are happy with the idea, or ask to save or hand it off, call save_brainstorm with a short title; the spec is written from this conversation, so summarise the decisions in your last reply before saving if they are scattered.
@@ -258,11 +264,41 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     }),
     defineTool({
       name: "start_readme",
-      description: "Write or update README.md for a repository from its code and .gitfill/assets. Returns a job id.",
-      input: z.object({ repository_id: z.string().uuid(), instructions: z.string().max(2000).optional().describe("What the user wants from the README, in their words.") }),
+      description: "Write or update README.md for a repository from its code, the user's choices and uploads, with generated banner, architecture and flow images. Returns a job id.",
+      input: z.object({
+        repository_id: z.string().uuid(),
+        template: z.enum(README_TEMPLATE_IDS).optional(),
+        sections: z
+          .array(z.object({ id: z.string().regex(/^[a-z_]{2,30}$/).describe('A section id from the catalogue, or "custom".'), title: z.string().max(60).optional(), note: z.string().max(400).optional() }))
+          .max(30)
+          .optional()
+          .describe("The contents in order, when the user changed the template's."),
+        banner: z.boolean().optional(),
+        diagrams: z.boolean().optional(),
+        badges: z.boolean().optional(),
+        image_theme: z.enum(THEMES).optional().describe("Deck template whose colours the images use."),
+        asset_ids: z.array(z.string().uuid()).max(12).optional().describe("Upload ids of screenshots to show."),
+        logo_asset_id: z.string().uuid().optional(),
+        links: z.array(z.object({ label: z.string().min(1).max(30), url: z.string().url().max(300) })).max(6).optional(),
+        reference: z.string().max(20_000).optional().describe("A README the user pasted to follow for structure and style."),
+        answers: z.string().max(4000).optional().describe("The user's answers to your questions, in their words."),
+        instructions: z.string().max(2000).optional().describe("What the user wants from the README, in their words."),
+      }),
       run: async (i) =>
         act(async () => {
-          const { job, repo } = await startReadme(db, userId, workspaceId, i.repository_id, { instructions: i.instructions ?? "" });
+          const style = Object.fromEntries(Object.entries({ banner: i.banner, diagrams: i.diagrams, badges: i.badges }).filter(([, v]) => v !== undefined));
+          const { job, repo } = await startReadme(db, userId, workspaceId, i.repository_id, {
+            instructions: i.instructions ?? "",
+            template: i.template,
+            sections: i.sections,
+            style,
+            imageTheme: i.image_theme,
+            assetIds: i.asset_ids,
+            brand: i.logo_asset_id ? { logoAssetId: i.logo_asset_id } : undefined,
+            links: i.links,
+            reference: i.reference,
+            answers: i.answers,
+          });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not start the README."),

@@ -1,6 +1,7 @@
 import { authMode, env } from "@/lib/config/env";
 import { getSessionUser } from "@/lib/auth/current";
 import { getGitHubConnection } from "@/lib/auth/github-token";
+import { githubAppStatus } from "@/lib/connectors/github/app";
 import { getDb } from "@/lib/db";
 import { fail, handleError, ok } from "@/lib/http";
 
@@ -10,7 +11,7 @@ export async function GET() {
     const user = await getSessionUser();
     if (!user) return fail(401, "unauthorized", "Not signed in.");
     const github = await getGitHubConnection(getDb(), user.id);
-    return ok({ user, authMode: authMode(), githubConfigured: Boolean(env().GITHUB_OAUTH_CLIENT_ID), github });
+    return ok({ user, authMode: authMode(), githubConfigured: Boolean(env().GITHUB_OAUTH_CLIENT_ID), github, githubApp: githubAppStatus() });
   } catch (err) {
     return handleError(err);
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, ExternalLink, GitBranch, GitCompareArrows, Lock, MoreHorizontal, Presentation, Sparkles, Trash2 } from "lucide-react";
+import { BookOpen, ExternalLink, FileText, GitBranch, GitCompareArrows, Lock, MoreHorizontal, Presentation, Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -8,6 +8,7 @@ import type { RepoView } from "@/lib/client/types";
 import { CompareDialog } from "./compare-dialog";
 import { GenerateDialog } from "./generate-dialog";
 import { HandbookDialog } from "./handbook-dialog";
+import { ReadmeDialog } from "./readme-dialog";
 
 export function RepoRow({ workspaceId, repo, compact = false, onRemove, onStarted }: { workspaceId: string; repo: RepoView; compact?: boolean; onRemove?: () => void; onStarted?: (jobId: string) => void }) {
   return (
@@ -54,6 +55,7 @@ export function RepoRow({ workspaceId, repo, compact = false, onRemove, onStarte
                   <CompareDialog workspaceId={workspaceId} repo={repo} onStarted={onStarted} trigger={<DropdownMenuItem onSelect={(e) => e.preventDefault()}><GitCompareArrows className="size-4" />Compare commits</DropdownMenuItem>} />
                 )}
                 <GenerateDialog workspaceId={workspaceId} repo={repo} onStarted={onStarted} trigger={<DropdownMenuItem onSelect={(e) => e.preventDefault()}><Presentation className="size-4" />Generate presentation</DropdownMenuItem>} />
+                <ReadmeDialog workspaceId={workspaceId} repo={repo} onStarted={onStarted} trigger={<DropdownMenuItem onSelect={(e) => e.preventDefault()}><FileText className="size-4" />Write README</DropdownMenuItem>} />
                 {onRemove && (
                   <>
                     <DropdownMenuSeparator />

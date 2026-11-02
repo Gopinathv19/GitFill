@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Loader2, MessageCircleQuestion, Sparkles } from "lucide-react";
 import { BrandPanel, TemplateGallery, type BrandState } from "@/components/presentation/template-gallery";
+import { DictateButton } from "@/components/shared/dictate-button";
 import { UploadZone } from "@/components/shared/upload-zone";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -19,6 +20,19 @@ import { QuestionCard } from "./question-card";
 
 const STEPS = ["Deck", "Look", "Material", "Questions", "Review"] as const;
 type Step = (typeof STEPS)[number];
+
+/** Spoken text added to a field: a new line for list fields, a space otherwise. */
+const append = (current: string, spoken: string, newline = false) => (current.trim() ? `${current.trimEnd()}${newline ? "\n" : " "}${spoken}` : spoken);
+
+/** A field label with a mic on the right. */
+function VoiceLabel({ htmlFor, children, workspaceId, onText }: { htmlFor: string; children: React.ReactNode; workspaceId: string; onText: (text: string) => void }) {
+  return (
+    <div className="flex items-end justify-between gap-2">
+      <Label htmlFor={htmlFor}>{children}</Label>
+      <DictateButton size="sm" workspaceId={workspaceId} onText={onText} />
+    </div>
+  );
+}
 
 const lines = (text: string) =>
   text
@@ -218,16 +232,22 @@ export function GenerateDialog({ workspaceId, repo, trigger, onStarted }: { work
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <Label htmlFor="g-must">Must cover <span className="font-normal text-muted-foreground">(one per line)</span></Label>
+                <VoiceLabel htmlFor="g-must" workspaceId={workspaceId} onText={(t) => setMustCover((v) => append(v, t, true))}>
+                  Must cover <span className="font-normal text-muted-foreground">(one per line)</span>
+                </VoiceLabel>
                 <Textarea id="g-must" value={mustCover} onChange={(e) => setMustCover(e.target.value)} className="min-h-20" placeholder={"The ingestion pipeline\nHow auth works"} />
               </div>
               <div>
-                <Label htmlFor="g-avoid">Leave out <span className="font-normal text-muted-foreground">(one per line)</span></Label>
+                <VoiceLabel htmlFor="g-avoid" workspaceId={workspaceId} onText={(t) => setAvoid((v) => append(v, t, true))}>
+                  Leave out <span className="font-normal text-muted-foreground">(one per line)</span>
+                </VoiceLabel>
                 <Textarea id="g-avoid" value={avoid} onChange={(e) => setAvoid(e.target.value)} className="min-h-20" placeholder="Deployment details" />
               </div>
             </div>
             <div>
-              <Label htmlFor="g-notes">Anything else GitFill should know</Label>
+              <VoiceLabel htmlFor="g-notes" workspaceId={workspaceId} onText={(t) => setNotes((v) => append(v, t))}>
+                Anything else GitFill should know
+              </VoiceLabel>
               <Textarea id="g-notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="min-h-16" placeholder="e.g. We won 2nd place last year with the retrieval demo; keep it non-technical for the first half." />
             </div>
           </div>
@@ -251,6 +271,7 @@ export function GenerateDialog({ workspaceId, repo, trigger, onStarted }: { work
                 )}
                 <QuestionCard
                   ask={questions}
+                  workspaceId={workspaceId}
                   onAnswer={(text) => {
                     setAnswers(text.startsWith("No preferences") ? "" : text);
                     setQuestionsState("answered");

@@ -1,4 +1,5 @@
 import { createSign } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { env } from "@/lib/config/env";
 import { GitHubClient } from "./client";
 
@@ -26,8 +27,39 @@ export class AppNotInstalledError extends Error {
 
 export function githubAppConfig(): GitHubAppConfig | null {
   const e = env();
-  if (!e.GITHUB_APP_ID || !e.GITHUB_APP_PRIVATE_KEY) return null;
-  return { id: e.GITHUB_APP_ID, privateKey: e.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n"), slug: e.GITHUB_APP_SLUG ?? null };
+  const key = e.GITHUB_APP_PRIVATE_KEY ?? readKeyFile(e.GITHUB_APP_PRIVATE_KEY_PATH);
+  if (!e.GITHUB_APP_ID || !key) return null;
+  return { id: e.GITHUB_APP_ID, privateKey: key.replace(/\\n/g, "\n"), slug: e.GITHUB_APP_SLUG ?? null };
+}
+
+function readKeyFile(path: string | undefined): string | null {
+  if (!path) return null;
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    console.error(`GITHUB_APP_PRIVATE_KEY_PATH: cannot read ${path}`);
+    return null;
+  }
+}
+
+export type GitHubAppStatus =
+  | { state: "not_configured" }
+  | { state: "invalid_key"; detail: string }
+  | { state: "configured"; slug: string | null; botName: string | null; installUrl: string | null };
+
+/**
+ * Whether pull requests will be opened by the app, checked locally (the key must sign a JWT).
+ * Without the app, they are opened with the signed-in user's own token and show as that user.
+ */
+export function githubAppStatus(): GitHubAppStatus {
+  const cfg = githubAppConfig();
+  if (!cfg) return { state: "not_configured" };
+  try {
+    appJwt(cfg);
+  } catch (err) {
+    return { state: "invalid_key", detail: err instanceof Error ? err.message.slice(0, 160) : "the private key could not sign" };
+  }
+  return { state: "configured", slug: cfg.slug, botName: cfg.slug ? `${cfg.slug}[bot]` : null, installUrl: installUrl(cfg) };
 }
 
 export function installUrl(cfg: Pick<GitHubAppConfig, "slug">): string | null {

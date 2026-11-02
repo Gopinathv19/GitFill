@@ -14,8 +14,13 @@ GitFill is a web app (GitHub repositories) and a VS Code extension (local code, 
 | **Repository handbook** — whole repo, one module, or one feature; as a technical handbook, hackathon pitch guide, new-developer guide or backend/frontend deep dive | Web | Overview, architecture (diagram), directory guide, end-to-end workflows (sequence diagrams), API table, data flow and models (ER), tech stack, design decisions with evidence, presentation guide, Q&A prep, getting started, open questions |
 | **Commit-to-commit analysis** — any two commits, branches or tags | Web, VS Code (local refs) | Change summary, before/after structure, measured structural diff (moved/added/removed declarations, module dependencies, packages, routes, directories), impact on dependents, interfaces, tests and risks; hypotheses labelled as such |
 | **Architecture reuse** — "make repo B follow repo A's service/repository layering but keep B's models" | Web | Implementation brief: patterns with reference files, target state, comparison table, file-by-file plan, dependencies, constraints, do-not-modify list, acceptance criteria, tests. Exportable as Markdown or JSON for a coding agent |
-| **Documentation** | VS Code, Web | Doc comments with a diff preview (Apply/Reject), README drift detection with one-click fixes, README generation |
+| **Documentation** | VS Code, Web | Doc comments with a diff preview (Apply/Reject), README drift detection with one-click fixes |
+| **README studio** — pick a template (product showcase, open-source library, service, research, minimal) or paste a README to follow; arrange the contents; GitFill reads the repo and asks a few questions first | Web, chat | README.md with a generated banner, architecture and flow images (SVG, coloured by a deck template or your brand), stack badges, your screenshots, a GitHub-style preview, and a pull request or zip with `docs/readme/*` |
 | **Presentations** — pitch, architecture review, onboarding, stakeholder update, tech talk or engineering walkthrough; GitFill reads the repo and asks you a few grounded questions first | Web, chat | 16:9 decks in one of 8 templates or your own brand (colours, logo, or a company `.pptx` template), with your screenshots and documents, as an **editable** `.pptx` (real text, shapes and diagrams) + PDF; rendered, measured, content-reviewed and repaired automatically |
+
+## Voice input
+
+Every place you type a request has a mic: the chat, the new-session box, GitFill's questions, the presentation wizard and the revision box. Click it and speak; while recording, ✓ puts the text in the box for review and ↑ sends it straight away (Esc cancels, recordings stop after 5 minutes). The browser records with MediaRecorder and converts the audio to mono 16-bit 24 kHz WAV itself (the only format Muse Voice Transcribe accepts), so the server needs no ffmpeg; `/api/transcribe` forwards it to `POST {MODEL_API_BASE_URL}/asr/transcribe` with the workspace's repository names as keywords and an English language hint (which also restores punctuation). Audio is never stored.
 
 ## How it works
 
@@ -49,6 +54,7 @@ flowchart LR
 | composer | `muse-spark-1.3` | Composing each deck page from the outline, in parallel |
 | writer, repairer | `muse-spark-1.3` | README, doc comments, drift checks; slide repair |
 | reviewer, describer | `muse-spark-1.3`, reasoning `minimal` | Slide and video-frame review; describing uploaded images |
+| transcriber | `muse-voice-transcribe-1.0` (at `/asr/transcribe`, not chat completions) | Voice input: dictating questions, answers and deck notes |
 | illustrator | `muse-image-1.0` | Deck artwork |
 
 `MUSE_USE_CONTRIBUTOR=true` routes the loop-heavy roles to `-contributor` models (Meta may train on those inputs; public repos only). `MUSE_MODEL_<ROLE>` and `MUSE_EFFORT_<ROLE>` (e.g. `MUSE_MODEL_READER=muse-spark-1.2`, `MUSE_EFFORT_REVIEWER=low`) override one role without a code change.
@@ -135,12 +141,15 @@ Responses use `{ "data": ... }` or `{ "error": { "code", "message" } }`. Browser
 | `POST` | `/api/workspaces/:id/compare` | Queue a commit comparison: `repositoryId`, `base`, `head`, `focus` |
 | `POST` | `/api/workspaces/:id/reuse` | Queue an implementation brief: `referenceRepositoryId`, `targetRepositoryId`, `request`, `reuseKinds[]` |
 | `POST` | `/api/workspaces/:id/generate` | Queue a presentation: `repositoryId`, `deckType`, `audience`, `minutes` or `slideCount`, `theme` (template), `brand`, `assetIds[]`, `mustCover[]`, `avoid[]`, `answers`, `instructions`, `outputs{pdf,readme,illustrations,pptx:"native"\|"image"}` |
+| `POST` | `/api/workspaces/:id/readme` | Queue a README: `repositoryId`, `template`, `sections[{id,title?,note?}]`, `style{banner,diagrams,badges,…}`, `imageTheme`, `brand`, `reference`, `assetIds[]`, `links[]`, `answers`, `instructions` |
+| `POST` | `/api/workspaces/:id/readme-questions` | GitFill scouts the repository and returns 2-4 grounded questions to ask before a README |
+| `GET` | `/api/documents/:id/files/<path>` | A file a README ships with (e.g. `docs/readme/banner.svg`), for the preview |
 | `POST` | `/api/workspaces/:id/presentation-questions` | GitFill scouts the repository and returns 2-4 grounded questions to ask before a deck |
 | `GET`/`POST` | `/api/workspaces/:id/uploads` | List or add files (multipart `file`, `purpose`: material \| template \| logo, optional `caption`) |
 | `GET`/`PATCH`/`DELETE` | `/api/uploads/:id` | An upload's bytes, its caption, or remove it |
 | `GET` | `/api/documents?workspaceId=&kind=` | Documents (handbook, commit_report, implementation_brief, explanation) |
 | `GET`/`DELETE` | `/api/documents/:id` | Document with Markdown, structured spec, snapshots and verified claims |
-| `GET` | `/api/documents/:id/download?format=md\|json` | Download the Markdown, or the structured spec for tooling |
+| `GET` | `/api/documents/:id/download?format=md\|json\|zip` | Download the Markdown, the structured spec for tooling, or (READMEs) a zip with `README.md` and `docs/readme/*` |
 | `GET` | `/api/jobs/:id` | Job status and every recorded tool and model call |
 | `GET`/`POST`, `DELETE` | `/api/tokens`, `/api/tokens/:id` | Personal API tokens for the extension |
 | `GET` | `/api/github/repositories?query=` | Repositories the user's connected GitHub account can access |
@@ -152,6 +161,7 @@ Responses use `{ "data": ... }` or `{ "error": { "code", "message" } }`. Browser
 | `POST` | `/api/ext/changes` | Explain a git diff (working tree, staged, or a commit range) with current file contents |
 | `POST` | `/api/ext/drift` | README statements a diff makes outdated, with proposed edits |
 | `GET`/`POST` | `/api/presentations`, `/api/presentations/:id/*` | Decks, revisions (`instruction`, or `theme` to switch template without regenerating) and downloads |
+| `POST` | `/api/transcribe` | Voice input: multipart `audio` (WAV) and optional `workspaceId` (its repository names bias recognition) → `{ text, seconds }`; audio is not stored |
 | `GET` | `/api/health` | Database, model, Memora and worker status |
 
 ## Evaluating output quality
@@ -160,6 +170,17 @@ Responses use `{ "data": ... }` or `{ "error": { "code", "message" } }`. Browser
 - **Diagrams**: rendered only from validated structure; edges to unknown nodes and syntax problems are dropped and recorded as `diagramIssues` in the document metadata.
 - **Commit reports**: the "Measured by GitFill" section is computed from both versions; the model's narrative must be consistent with it.
 - **Implementation briefs**: constraints, do-not-modify lists and acceptance criteria are explicit so the result of executing a brief can be checked.
+
+## Pull requests as a bot (GitHub App)
+
+GitFill signs users in with a GitHub **OAuth app**. Anything done with an OAuth token is done *as that user*, so without more setup the README, docs and spec pull requests are authored by the person who asked for them. To open them as `gitfill[bot]`, also create a **GitHub App** (a different kind of app; an OAuth app cannot be converted):
+
+1. Organization (or account) settings → Developer settings → **GitHub Apps** → New GitHub App. Homepage: your `APP_BASE_URL`. Untick **Webhook → Active**. Repository permissions: **Contents: Read and write**, **Pull requests: Read and write** (Metadata: Read is added automatically). Choose *Any account* if repositories outside this organization should be able to install it.
+2. Create it, note the **App ID** and the URL name (`github.com/apps/<slug>`), then **Generate a private key** (a `.pem` downloads).
+3. **Install App** on each account and the repositories GitFill may open pull requests in.
+4. In `.env`: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY_PATH=/path/to/key.pem` (or the key itself in `GITHUB_APP_PRIVATE_KEY`). Restart the server.
+
+Keep the OAuth app: it is still how people sign in and how repositories are read. Settings and `/api/health` (`githubApp`) show which identity pull requests will use; a user still needs push access to a repository before GitFill opens a pull request there for them.
 
 ## GitHub access model
 

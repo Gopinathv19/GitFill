@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { use, useState } from "react";
 import { ArrowUp, Check, ChevronDown, FolderGit2, GitBranch, Loader2, MessageSquare, Plus, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/layout/shell-context";
+import { DictateButton } from "@/components/shared/dictate-button";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AddRepositoryDialog } from "@/components/workspace/add-repository-dialog";
@@ -109,9 +110,18 @@ export default function NewSessionPage({ params }: { params: Promise<{ id: strin
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button type="submit" size="icon" className="size-8 shrink-0 rounded-full" disabled={starting || !text.trim()} aria-label="Start session">
-                  {starting ? <Loader2 className="animate-spin" /> : <ArrowUp />}
-                </Button>
+                <div className="flex items-center gap-1">
+                  <DictateButton
+                    size="sm"
+                    workspaceId={id}
+                    disabled={starting}
+                    onText={(spoken) => setText((t) => (t.trim() ? `${t.trimEnd()} ${spoken}` : spoken))}
+                    onSend={(spoken) => void start(text.trim() ? `${text.trimEnd()} ${spoken}` : spoken)}
+                  />
+                  <Button type="submit" size="icon" className="size-8 shrink-0 rounded-full" disabled={starting || !text.trim()} aria-label="Start session">
+                    {starting ? <Loader2 className="animate-spin" /> : <ArrowUp />}
+                  </Button>
+                </div>
               </div>
             </form>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 pb-1 pt-2 text-xs text-muted-foreground">

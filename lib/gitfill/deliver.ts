@@ -5,6 +5,8 @@ import { appClientFor, githubAppConfig } from "@/lib/connectors/github/app";
 import { parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
 import { documents, type DocumentKind } from "@/lib/db/schema";
+import { documentFiles } from "@/lib/readme/files";
+import { getStorage } from "@/lib/storage";
 import { getRepository } from "@/lib/workspaces/service";
 import { brainstormPath, DOCS_DIR, DOCS_INDEX, docPath, GITFILL_README, GITFILL_README_TEXT, readFrontMatter, withFrontMatter } from "./layout";
 
@@ -14,7 +16,9 @@ export class DeliveryError extends Error {
 
 export interface PlannedFile {
   path: string;
+  /** Text, or base64 when `encoding` is "base64" (images). */
   content: string;
+  encoding?: "utf-8" | "base64";
 }
 
 export interface PullRequestRecord {
@@ -51,6 +55,8 @@ export function planFiles(opts: {
   hasGitfillReadme: boolean;
   /** Docs already in .gitfill/docs with their front matter, for the index. */
   existingDocs: Array<{ path: string; title: string | null; sourceCommit: string | null }>;
+  /** Files a README ships with (docs/readme/*), committed next to it. */
+  assets?: PlannedFile[];
 }): { path: string; files: PlannedFile[] } {
   const { doc, now } = opts;
   const files: PlannedFile[] = [];
@@ -60,6 +66,8 @@ export function planFiles(opts: {
   if (dest === "readme") {
     path = "README.md";
     files.push({ path, content: doc.markdown.trim() + "\n" });
+    // Only files under docs/readme/ ship this way; a stored path can never reach elsewhere in the tree.
+    for (const a of opts.assets ?? []) if (/^docs\/readme\/[\w.-]+$/.test(a.path)) files.push(a);
   } else if (dest === "brainstorm") {
     path = brainstormPath(doc.title, now);
     files.push({ path, content: withFrontMatter({ gitfill: "brainstorm", title: doc.title, source_commit: doc.sourceCommit, generated, status: "ready" }, doc.markdown) });
@@ -116,11 +124,17 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
 
   const meta = (doc.metadata ?? {}) as Record<string, unknown>;
   const sourceCommit = typeof meta.commitSha === "string" ? meta.commitSha : head.sha;
+  const assets: PlannedFile[] = [];
+  for (const f of destinationOf(doc.kind) === "readme" ? documentFiles(doc.metadata) : []) {
+    const bytes = await getStorage().get(f.key);
+    assets.push(f.mime === "image/svg+xml" ? { path: f.path, content: bytes.toString("utf8") } : { path: f.path, content: bytes.toString("base64"), encoding: "base64" });
+  }
   const plan = planFiles({
     doc: { kind: doc.kind, title: doc.title, markdown: doc.markdown, sourceCommit },
     now: new Date(),
     hasGitfillReadme: tree.entries.some((e) => e.path === GITFILL_README),
     existingDocs,
+    assets,
   });
   const dest = destinationOf(doc.kind);
   const what = dest === "readme" ? "README" : dest === "brainstorm" ? "brainstorm spec" : "doc";

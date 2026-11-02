@@ -260,16 +260,21 @@ export class GitHubClient {
   async openPullRequest(
     owner: string,
     repo: string,
-    opts: { base: string; branch: string; title: string; body: string; message: string; files: Array<{ path: string; content: string }> },
+    opts: { base: string; branch: string; title: string; body: string; message: string; files: Array<{ path: string; content: string; encoding?: "utf-8" | "base64" }> },
   ): Promise<{ number: number; url: string; branch: string; commitSha: string }> {
     if (!isValidBranchName(opts.base) || !isValidBranchName(opts.branch)) throw new GitHubError("Invalid branch name.", 400, "forbidden");
     const r = `/repos/${seg(owner)}/${seg(repo)}`;
     const head = await this.json<{ object: { sha: string } }>(this.api(`${r}/git/ref/heads/${opts.base.split("/").map(seg).join("/")}`));
     const parent = await this.json<{ tree: { sha: string } }>(this.api(`${r}/git/commits/${head.object.sha}`));
-    const tree = await this.send<{ sha: string }>("POST", this.api(`${r}/git/trees`), {
-      base_tree: parent.tree.sha,
-      tree: opts.files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
-    });
+    // Text goes inline in the tree; binary files (images) are uploaded as base64 blobs first.
+    const entries = await Promise.all(
+      opts.files.map(async (f) => {
+        if (f.encoding !== "base64") return { path: f.path, mode: "100644", type: "blob", content: f.content };
+        const blob = await this.send<{ sha: string }>("POST", this.api(`${r}/git/blobs`), { content: f.content, encoding: "base64" });
+        return { path: f.path, mode: "100644", type: "blob", sha: blob.sha };
+      }),
+    );
+    const tree = await this.send<{ sha: string }>("POST", this.api(`${r}/git/trees`), { base_tree: parent.tree.sha, tree: entries });
     const commit = await this.send<{ sha: string }>("POST", this.api(`${r}/git/commits`), { message: opts.message, tree: tree.sha, parents: [head.object.sha] });
     await this.send("POST", this.api(`${r}/git/refs`), { ref: `refs/heads/${opts.branch}`, sha: commit.sha });
     const pr = await this.send<{ number: number; html_url: string }>("POST", this.api(`${r}/pulls`), { title: opts.title, head: opts.branch, base: opts.base, body: opts.body });

@@ -39,7 +39,9 @@ export type ModelRole =
   /** Reading large files once and compressing them into digests the tool loops work from. */
   | "reader"
   /** Describing an uploaded image in a sentence or two. */
-  | "describer";
+  | "describer"
+  /** Speech to text for dictation (Muse Voice Transcribe, served at /asr/transcribe, not chat completions). */
+  | "transcriber";
 
 const STANDARD: Record<ModelRole, string> = {
   planner: "muse-wonder-1.0",
@@ -55,6 +57,7 @@ const STANDARD: Record<ModelRole, string> = {
   director: "muse-wonder-1.0",
   reader: "muse-spark-1.3",
   describer: "muse-spark-1.3",
+  transcriber: "muse-voice-transcribe-1.0",
 };
 
 /**

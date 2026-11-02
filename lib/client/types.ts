@@ -42,7 +42,7 @@ export interface WorkspaceSummary {
   documentCount: number;
 }
 
-export type DocumentKind = "handbook" | "commit_report" | "implementation_brief" | "explanation";
+export type DocumentKind = "handbook" | "commit_report" | "implementation_brief" | "explanation" | "readme" | "brainstorm";
 
 export interface DocumentSummary {
   id: string;

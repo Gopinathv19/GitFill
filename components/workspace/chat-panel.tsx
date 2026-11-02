@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, FileText, GitCompareArrows, Paperclip } from "lucide-react";
+import { DictateButton } from "@/components/shared/dictate-button";
 import { UploadZone } from "@/components/shared/upload-zone";
 import { Button } from "@/components/ui/button";
 import { ReuseDialog } from "./reuse-dialog";
@@ -184,8 +185,10 @@ const Composer = memo(function Composer({ onSend, sending, workspaceId }: { onSe
   const [text, setText] = useState("");
   const [files, setFiles] = useState<UploadView[]>([]);
   const [attaching, setAttaching] = useState(false);
-  async function submit() {
-    const value = text;
+  /** Spoken text joins what is already typed. */
+  const withSpoken = (spoken: string) => (text.trim() ? `${text.trimEnd()} ${spoken}` : spoken);
+  async function submit(override?: string) {
+    const value = override ?? text;
     if ((!value.trim() && !files.length) || sending) return;
     const attached = files;
     setText("");
@@ -214,6 +217,7 @@ const Composer = memo(function Composer({ onSend, sending, workspaceId }: { onSe
         <Button type="button" size="icon" variant="ghost" className="size-9 shrink-0" aria-label="Attach files" aria-pressed={attaching} onClick={() => setAttaching((a) => !a)}>
           <Paperclip />
         </Button>
+        <DictateButton workspaceId={workspaceId} disabled={sending} onText={(spoken) => setText(withSpoken(spoken))} onSend={(spoken) => void submit(withSpoken(spoken))} />
         <textarea
           aria-label="Message GitFill"
           value={text}
@@ -232,7 +236,7 @@ const Composer = memo(function Composer({ onSend, sending, workspaceId }: { onSe
           <ArrowUp />
         </Button>
       </form>
-      <p className="mt-1.5 text-[11px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">Enter to send · Shift+Enter for a new line · or press the mic and ask out loud</p>
     </>
   );
 });

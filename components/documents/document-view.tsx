@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Download, FileJson, Trash2 } from "lucide-react";
-import { Markdown } from "@/components/shared/markdown";
+import { Markdown, ReadmeMarkdown } from "@/components/shared/markdown";
+import { documentFiles } from "@/lib/readme/files";
 import { PageHeader } from "@/components/shared/page-header";
 import { DOCUMENT_KIND_LABELS, JobStatusBadge } from "@/components/shared/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +55,16 @@ export function DocumentView({ documentId }: { documentId: string }) {
     const anchor = c.startLine ? `#L${c.startLine}${c.endLine && c.endLine !== c.startLine ? `-L${c.endLine}` : ""}` : "";
     return `${snap.repositoryUrl}/blob/${snap.commitSha}/${c.filePath}${anchor}`;
   };
+  // README images: the document's own files (generated images, uploads), else the repository at that commit.
+  const readmeFiles = documentFiles(doc.metadata);
+  const shipped = new Set(readmeFiles.map((f) => f.path));
+  const resolveImage = (src: string) => {
+    if (/^(https?:|data:)/i.test(src)) return src;
+    const path = src.replace(/^\.\//, "").split(/[?#]/)[0]!;
+    if (shipped.has(path)) return `/api/documents/${doc.id}/files/${path}`;
+    const snap = primary ?? doc.snapshots[0];
+    return snap ? `https://raw.githubusercontent.com/${snap.owner}/${snap.name}/${snap.commitSha}/${path}` : "";
+  };
 
   return (
     <div className="space-y-6">
@@ -76,6 +87,9 @@ export function DocumentView({ documentId }: { documentId: string }) {
             )}
             {doc.repository || doc.snapshots.length ? <PullRequestButton documentId={doc.id} kind={doc.kind} metadata={doc.metadata} /> : null}
             <Button asChild variant="outline" size="sm"><a href={`/api/documents/${doc.id}/download?format=md`}><Download />Markdown</a></Button>
+            {readmeFiles.length > 0 && (
+              <Button asChild variant="outline" size="sm"><a href={`/api/documents/${doc.id}/download?format=zip`}><Download />With images (.zip)</a></Button>
+            )}
             <Button asChild variant="outline" size="sm"><a href={`/api/documents/${doc.id}/download?format=json`}><FileJson />JSON</a></Button>
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" aria-label="Delete document" onClick={() => void remove()}><Trash2 /></Button>
           </>
@@ -93,7 +107,7 @@ export function DocumentView({ documentId }: { documentId: string }) {
       {tab === "document" && (
         <Card>
           <CardContent className="p-6 sm:p-8">
-            <Markdown>{doc.markdown}</Markdown>
+            {doc.kind === "readme" ? <ReadmeMarkdown resolveImage={resolveImage}>{doc.markdown}</ReadmeMarkdown> : <Markdown>{doc.markdown}</Markdown>}
           </CardContent>
         </Card>
       )}
