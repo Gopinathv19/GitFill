@@ -27,3 +27,30 @@ export const reviseRequestSchema = z.object({
 });
 
 export type ReviseRequest = z.infer<typeof reviseRequestSchema>;
+
+export const videoRequestSchema = z.object({
+  /** What the user asked the video to be, in their words. */
+  instructions: z.string().trim().max(2000).default(""),
+  /** The reader brief agreed with the user in chat. */
+  brief: z.string().trim().max(4000).default(""),
+  seconds: z.number().int().min(20).max(150).default(60),
+});
+
+export type VideoRequest = z.infer<typeof videoRequestSchema>;
+
+export const readmeRequestSchema = z.object({
+  /** What the team wants from the README, in their words. */
+  instructions: z.string().trim().max(2000).default(""),
+  branch: z.string().trim().max(200).optional(),
+});
+
+export type ReadmeRequest = z.infer<typeof readmeRequestSchema>;
+
+export const brainstormRequestSchema = z.object({
+  title: z.string().trim().min(3).max(100),
+  /** The brainstorm as it happened in chat, captured when the spec was requested. */
+  conversation: z.string().trim().min(20).max(60_000),
+  branch: z.string().trim().max(200).optional(),
+});
+
+export type BrainstormRequest = z.infer<typeof brainstormRequestSchema>;

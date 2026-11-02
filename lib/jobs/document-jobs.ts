@@ -144,7 +144,7 @@ export async function runReuseJob(db: Database, job: Job, recorder: DbRecorder, 
 
 // ─── helpers ───────────────────────────────────────────────────────────────────
 
-async function ingest(client: GitHubClient, url: string, branch: string | undefined, recorder: DbRecorder, label = "repository"): Promise<SourceSnapshot> {
+export async function ingest(client: GitHubClient, url: string, branch: string | undefined, recorder: DbRecorder, label = "repository"): Promise<SourceSnapshot> {
   const event = await recorder.start("tool", `inspect_${label}`, { url, branch, asUser: client.authenticated });
   try {
     const snapshot = await ingestGitHubRepository({ url, branch, client });
@@ -173,7 +173,7 @@ function startMemoraIndex(snapshot: SourceSnapshot, recorder: DbRecorder): void 
   })().catch(() => undefined);
 }
 
-async function saveSnapshot(db: Database, projectId: string, snapshot: SourceSnapshot, extra: Record<string, unknown>, claims: Claim[]) {
+export async function saveSnapshot(db: Database, projectId: string, snapshot: SourceSnapshot, extra: Record<string, unknown>, claims: Claim[]) {
   const [snap] = await db
     .insert(repositorySnapshots)
     .values({
@@ -209,7 +209,7 @@ export async function saveDocument(
   return row!;
 }
 
-async function complete(db: Database, jobId: string, documentId: string, snapshotId: string) {
+export async function complete(db: Database, jobId: string, documentId: string, snapshotId: string) {
   await db.update(generationJobs).set({ status: "completed", documentId, snapshotId, completedAt: new Date() }).where(eq(generationJobs.id, jobId));
 }
 

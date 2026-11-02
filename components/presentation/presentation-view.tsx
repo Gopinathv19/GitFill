@@ -13,6 +13,7 @@ import { Segmented } from "@/components/workspace/segmented";
 import { api, ApiError } from "@/lib/client/api";
 import { revisionProgress } from "@/lib/client/revision-progress";
 import { useJob, type JobView } from "@/lib/client/use-job";
+import { collectVideos, VideoPanel } from "./video-panel";
 import { cn as cx } from "@/lib/utils";
 
 /** Card header with title, description and an optional action, in SysOne style. */
@@ -42,10 +43,12 @@ function Spinner() {
 
 interface Artifact {
   id: string;
-  type: "pptx" | "pdf" | "readme" | "slide_preview" | "evidence_report" | "illustration";
+  type: "pptx" | "pdf" | "readme" | "slide_preview" | "evidence_report" | "illustration" | "video" | "thumbnail" | "video_source";
   filename: string;
   sizeBytes: number;
   slideIndex: number | null;
+  jobId: string | null;
+  createdAt: string;
 }
 
 interface Issue {
@@ -78,7 +81,7 @@ interface DeckView {
   id: string;
   workspaceId: string;
   title: string;
-  latestJob: { id: string; status: string } | null;
+  latestJob: { id: string; status: string; kind: string } | null;
   repository: { url: string; owner: string; name: string; branch: string; commitSha: string; agent: { turns: number; toolCalls: number } | null };
   claims: Array<{ ref: string; claim: string; type: string; status: "verified" | "inferred" | "unverified"; filePath: string | null; startLine: number | null; endLine: number | null }>;
   versions: Version[];
@@ -92,6 +95,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
   const [tab, setTab] = useState<"validation" | "evidence">("validation");
   // The revision being followed on this page: started here, or already running when the page opened.
   const [liveJobId, setLiveJobId] = useState<string | null>(null);
+  const [videoJobId, setVideoJobId] = useState<string | null>(null);
   const { job: live, now } = useJob(liveJobId);
   const running = live !== null && !TERMINAL.has(live.status);
 
@@ -112,7 +116,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
 
   useEffect(() => {
     void load().then((d) => {
-      if (d?.latestJob && !TERMINAL.has(d.latestJob.status)) setLiveJobId(d.latestJob.id);
+      if (d?.latestJob && !TERMINAL.has(d.latestJob.status)) (d.latestJob.kind === "video" ? setVideoJobId : setLiveJobId)(d.latestJob.id);
     });
   }, [load]);
 
@@ -130,6 +134,8 @@ export function PresentationView({ deckId }: { deckId: string }) {
     () => (version?.artifacts ?? []).filter((a) => a.type === "slide_preview").sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)),
     [version],
   );
+  const videos = useMemo(() => collectVideos(deck?.versions ?? []), [deck]);
+  const reload = useCallback(() => void load(), [load]);
   const progress = useMemo(() => (running && live ? revisionProgress(live) : null), [running, live]);
   // While a revision runs, the newest render round replaces the stored previews.
   const frames = useMemo<Frame[]>(() => {
@@ -265,6 +271,8 @@ export function PresentationView({ deckId }: { deckId: string }) {
       ) : (
         <RevisionBox deckId={deck.id} onStarted={(jobId) => setLiveJobId(jobId)} />
       )}
+
+      <VideoPanel deckId={deck.id} videos={videos} jobId={videoJobId} onJob={setVideoJobId} onDone={reload} />
 
       <div className="space-y-4">
         <div className="w-full sm:w-96">

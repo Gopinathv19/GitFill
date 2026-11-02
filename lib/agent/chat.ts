@@ -6,9 +6,12 @@ import { env } from "@/lib/config/env";
 import type { Database } from "@/lib/db";
 import { THEMES } from "@/lib/presentation/spec";
 import { HANDBOOK_AUDIENCES, REUSE_KINDS } from "@/lib/understanding/schemas";
-import { ActionError, askRepository, openWorkspaceRepository, revisePresentation, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
+import { ActionError, askRepository, openPullRequest, openWorkspaceRepository, revisePresentation, startBrainstorm, startReadme, startVideo, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
 import { getWorkspace, listMessages } from "@/lib/workspaces/service";
 import { askUserSchema, formatQuestions, type AskUser } from "@/lib/client/questions";
+import { AppNotInstalledError } from "@/lib/connectors/github/app";
+import { GitHubError } from "@/lib/connectors/github/client";
+import { DeliveryError } from "@/lib/gitfill/deliver";
 import type { CodeSource } from "@/lib/repo-store";
 import { MemoryRecorder, type LiveEvent } from "./recorder";
 import { createSearchTools } from "./search-tools";
@@ -27,17 +30,28 @@ You can act through tools:
 - start_commit_comparison to explain the architectural and structural changes between two commits, branches or tags. Runs in the background.
 - start_reuse_brief to write an implementation brief that transfers patterns from a reference repository into a target repository. Runs in the background.
 - start_presentation to generate a validated presentation deck; revise_presentation to change one. Runs in the background.
+- start_readme to write or update a repository's README.md from the code and the team's .gitfill/assets (screenshots, logo, brand and notes). Runs in the background.
+- save_brainstorm to write the current brainstorm up as an implementation spec for a coding agent, grounded in the code. Runs in the background.
+- open_pull_request to add a finished document to its repository as a pull request: a README becomes README.md, handbooks and other docs go to .gitfill/docs/, brainstorm specs and implementation briefs to .gitfill/brainstorm/. Only when the user asks for it.
+- start_video to make an explainer video (1080p MP4 with original music) and its thumbnail from an existing presentation. Runs in the background. A video needs a presentation of that repository; if there is none, offer to make the presentation first.
 Otherwise always finish with reply.
 
-Before a handbook or presentation: agree the intent
-A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So when the user asks for a handbook or presentation:
+Before a handbook, presentation or video: agree the intent
+A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So when the user asks for a handbook, presentation or video:
 1. Scout first. Look at the repository with list_files / grep / read_file (README, top-level directories, manifests, docs, entry points) until you know what is distinctive about it: its apps or modules, its audience-facing features, the external services or sponsors it highlights, its docs and screenshots.
 2. Work out which decisions about the document the request and the code leave open, and ask about those, and only those, with ask_user. Write the questions yourself for this repository; ground every option in something you found (name the real modules, features, services). 1-4 questions, one round. Add a short intro saying what you found.
 3. When the user answers (or says to just go ahead), write the brief and start the job. The brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
 Skip asking when the user has already given that intent, says "just go" / "use your judgment", or is asking for a revision. Never ask the same thing twice.
 
+Brainstorming
+When the user wants to think through a feature or change for a repository, be a sharp engineering partner: look at the relevant code first (list_files, grep, read_file), then discuss options and trade-offs grounded in what the code does today, ask focused questions one round at a time, and keep track of what has been decided. Do not write code. When they are happy with the idea, or ask to save or hand it off, call save_brainstorm with a short title; the spec is written from this conversation, so summarise the decisions in your last reply before saving if they are scattered.
+
+The .gitfill folder
+Repositories can have a .gitfill folder: .gitfill/assets (screenshots, logo, brand.json and notes the team adds for GitFill), .gitfill/docs (docs GitFill wrote) and .gitfill/brainstorm (specs GitFill wrote for coding agents). If someone asks how to get better READMEs, decks or videos, suggest adding screenshots and a short product note to .gitfill/assets.
+
 Rules:
 - Only start background work when the user clearly asks for it. If the request is ambiguous (several repositories and none named, missing commit refs), ask a short question instead.
+- Start only the kind of work the user asked for. If a start_* tool returns an error, tell the user what failed in your reply; never start a different kind of job (e.g. a presentation instead of a video) as a substitute unless they ask.
 - Use the exact ids from the workspace listing. Never invent ids, repositories, commits or results.
 - Background jobs show progress below your message; do not claim they are finished.
 - For questions about the code, prefer ask_codebase over guessing. Never answer code questions from memory.
@@ -85,7 +99,11 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     try {
       return await fn();
     } catch (err) {
-      return { error: err instanceof ActionError ? err.message : fallback };
+      // Errors written for users (no access, nothing to deliver, GitHub refused) go to the model as they are.
+      if (err instanceof ActionError || err instanceof DeliveryError || err instanceof GitHubError || err instanceof AppNotInstalledError) return { error: err.message };
+      // Unexpected failures (database, network) are logged for the operator; the model gets a plain message.
+      console.error(`chat tool failed: ${fallback}`, err);
+      return { error: `${fallback} This is a server-side problem, not something to work around: tell the user it failed and do not start other work instead.` };
     }
   };
 
@@ -208,6 +226,59 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         }, "Could not start the presentation."),
     }),
     defineTool({
+      name: "start_readme",
+      description: "Write or update README.md for a repository from its code and .gitfill/assets. Returns a job id.",
+      input: z.object({ repository_id: z.string().uuid(), instructions: z.string().max(2000).optional().describe("What the user wants from the README, in their words.") }),
+      run: async (i) =>
+        act(async () => {
+          const { job, repo } = await startReadme(db, userId, workspaceId, i.repository_id, { instructions: i.instructions ?? "" });
+          jobIds.push(job.id);
+          return { jobId: job.id, repository: repo.name, status: "queued" };
+        }, "Could not start the README."),
+    }),
+    defineTool({
+      name: "save_brainstorm",
+      description: "Write this conversation's brainstorm up as an implementation spec for a coding agent, grounded in the repository's code. Returns a job id.",
+      input: z.object({ repository_id: z.string().uuid(), title: z.string().min(3).max(100).describe("Short name of the idea.") }),
+      run: async (i) =>
+        act(async () => {
+          // The spec is written from the conversation itself, so it carries every decision as it was made.
+          const transcript = (await listMessages(db, sessionId, 80))
+            .map((m) => `${m.role === "user" ? "User" : "GitFill"}: ${m.content}`)
+            .join("\n\n")
+            .slice(-60_000);
+          const { job, repo } = await startBrainstorm(db, userId, workspaceId, i.repository_id, { title: i.title, conversation: transcript });
+          jobIds.push(job.id);
+          return { jobId: job.id, repository: repo.name, status: "queued" };
+        }, "Could not save the brainstorm."),
+    }),
+    defineTool({
+      name: "open_pull_request",
+      description: "Open a pull request that adds a document to its repository (README.md, .gitfill/docs or .gitfill/brainstorm). Returns the pull request link.",
+      input: z.object({ document_id: z.string().uuid() }),
+      run: async (i) =>
+        act(async () => {
+          const pr = await openPullRequest(db, userId, i.document_id);
+          return { pullRequest: pr.url, number: pr.number, file: pr.path, alreadyOpen: pr.existing === true };
+        }, "Could not open the pull request."),
+    }),
+    defineTool({
+      name: "start_video",
+      description: "Make an explainer video and thumbnail from an existing presentation. Returns a job id.",
+      input: z.object({
+        presentation_id: z.string().uuid(),
+        seconds: z.number().int().min(20).max(150).optional(),
+        instructions: z.string().max(2000).optional().describe("What the video should be, in the user's words."),
+        brief: BRIEF,
+      }),
+      run: async (i) =>
+        act(async () => {
+          const { job } = await startVideo(db, userId, i.presentation_id, { seconds: i.seconds, instructions: i.instructions, brief: i.brief });
+          jobIds.push(job.id);
+          return { jobId: job.id, status: "queued" };
+        }, "Could not start the video."),
+    }),
+    defineTool({
       name: "revise_presentation",
       description: "Request a natural-language revision of an existing presentation. Returns a job id.",
       input: z.object({ presentation_id: z.string().uuid(), instruction: z.string().min(3).max(2000) }),
@@ -227,7 +298,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     }),
   ];
 
-  const { result } = await runToolLoop<{ message?: string } & Partial<AskUser>>({
+  const loop = await runToolLoop<string | ({ message?: string } & Partial<AskUser>)>({
     client: new MuseClient(recorder.modelObserver()),
     model: modelFor("analyst"),
     purpose: "workspace_chat",
@@ -242,7 +313,15 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     maxToolCalls: 24,
     maxTokens: 8000,
     trimHistory: { keepTurns: 3, maxChars: 120_000 },
+    // A plain-text answer is a reply too; without this, two in a row failed the whole turn.
+    finishOnText: true,
+  }).catch((err) => {
+    // Jobs already started must still reach the user as cards, so the turn ends with what happened.
+    console.error("chat turn stopped early:", err);
+    if (!jobIds.length && !attachments.length) throw err;
+    return { result: { message: "I started the work below, but stopped before I could finish my reply." }, turns: 0, toolCalls: 0 };
   });
+  const result: { message?: string } & Partial<AskUser> = typeof loop.result === "string" ? { message: loop.result } : loop.result;
   logTimings(recorder, `chat turn (${jobIds.length} jobs started, ${attachments.length} answers attached)`);
   // Each answer numbers its evidence from C1; keep refs unique when several are attached.
   const answers = attachments.map((a, i) => (i ? suffixFootnotes(a, String(i + 1)) : a));

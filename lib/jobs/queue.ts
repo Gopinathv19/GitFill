@@ -2,7 +2,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { parseGitHubUrl, canonicalRepoUrl } from "@/lib/connectors/github/url";
 import { rowsOf, type Database } from "@/lib/db";
 import { generationJobs, projects, type JobKind, type JobStatus } from "@/lib/db/schema";
-import type { GenerateRequest } from "@/lib/validation/request";
+import type { GenerateRequest, VideoRequest } from "@/lib/validation/request";
 
 export const ACTIVE_STATUSES: JobStatus[] = [
   "analyzing_repository",
@@ -14,6 +14,8 @@ export const ACTIVE_STATUSES: JobStatus[] = [
   "generating_documents",
   "comparing_commits",
   "composing_document",
+  "composing_video",
+  "rendering_video",
 ];
 
 /** Jobs that have not reported progress for this long are treated as abandoned by a crashed worker. */
@@ -54,6 +56,15 @@ export async function enqueueDocumentJob(
       .returning();
     return row!;
   });
+}
+
+/** Queues a video and thumbnail for a deck, made from its latest version. */
+export async function enqueueVideo(db: Database, deck: { id: string; projectId: string }, repositoryUrl: string, request: VideoRequest) {
+  const [job] = await db
+    .insert(generationJobs)
+    .values({ projectId: deck.projectId, kind: "video", deckId: deck.id, repositoryUrl, userPrompt: request.instructions || "Explainer video", options: request })
+    .returning();
+  return job!;
 }
 
 export async function enqueueRevision(db: Database, deck: { id: string; projectId: string }, repositoryUrl: string, instruction: string) {

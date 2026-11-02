@@ -29,6 +29,8 @@ export interface RepoInfo {
   htmlUrl: string;
   /** Repository size in KB as GitHub reports it. */
   sizeKb: number;
+  /** Whether the token's account can push; null when GitHub did not say (e.g. app tokens). */
+  canPush: boolean | null;
 }
 
 export interface CommitInfo {
@@ -114,7 +116,25 @@ export class GitHubClient {
       license: license?.spdx_id ?? null,
       htmlUrl: String(data.html_url),
       sizeKb: Number(data.size ?? 0),
+      canPush: typeof (data.permissions as { push?: unknown } | undefined)?.push === "boolean" ? Boolean((data.permissions as { push: boolean }).push) : null,
     };
+  }
+
+  /** GitHub App (JWT client): the app's installation on a repository, or null when it is not installed there. */
+  async getRepoInstallation(owner: string, repo: string): Promise<{ id: number } | null> {
+    try {
+      const data = await this.json<{ id: number }>(this.api(`/repos/${seg(owner)}/${seg(repo)}/installation`));
+      return { id: data.id };
+    } catch (err) {
+      if (err instanceof GitHubError && err.code === "not_found") return null;
+      throw err;
+    }
+  }
+
+  /** GitHub App (JWT client): a token for one installation, limited to one repository and the given permissions. */
+  async createInstallationToken(installationId: number, repo: string, permissions: Record<string, "read" | "write">): Promise<{ token: string; expiresAt: string }> {
+    const data = await this.send<{ token: string; expires_at: string }>("POST", this.api(`/app/installations/${installationId}/access_tokens`), { repositories: [repo], permissions });
+    return { token: data.token, expiresAt: data.expires_at };
   }
 
   async getCommit(owner: string, repo: string, ref: string): Promise<CommitInfo> {
@@ -212,8 +232,59 @@ export class GitHubClient {
     return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   }
 
+  /** Whether a pull request is still open (null when it no longer exists). */
+  async pullRequestState(owner: string, repo: string, number: number): Promise<"open" | "closed" | "merged" | null> {
+    try {
+      const data = await this.json<{ state: string; merged_at: string | null }>(this.api(`/repos/${seg(owner)}/${seg(repo)}/pulls/${number}`));
+      return data.merged_at ? "merged" : data.state === "open" ? "open" : "closed";
+    } catch (err) {
+      if (err instanceof GitHubError && err.code === "not_found") return null;
+      throw err;
+    }
+  }
+
+  /** Reads one file at an exact commit, or null when it does not exist. */
+  async getFileTextIfExists(owner: string, repo: string, sha: string, path: string, maxBytes: number): Promise<string | null> {
+    try {
+      return await this.getFileText(owner, repo, sha, path, maxBytes);
+    } catch (err) {
+      if (err instanceof GitHubError && err.code === "not_found") return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Commits text files on top of a branch's head as one new commit on a new branch, then opens a
+   * pull request into that branch. Nothing is pushed to the base branch itself.
+   */
+  async openPullRequest(
+    owner: string,
+    repo: string,
+    opts: { base: string; branch: string; title: string; body: string; message: string; files: Array<{ path: string; content: string }> },
+  ): Promise<{ number: number; url: string; branch: string; commitSha: string }> {
+    if (!isValidBranchName(opts.base) || !isValidBranchName(opts.branch)) throw new GitHubError("Invalid branch name.", 400, "forbidden");
+    const r = `/repos/${seg(owner)}/${seg(repo)}`;
+    const head = await this.json<{ object: { sha: string } }>(this.api(`${r}/git/ref/heads/${opts.base.split("/").map(seg).join("/")}`));
+    const parent = await this.json<{ tree: { sha: string } }>(this.api(`${r}/git/commits/${head.object.sha}`));
+    const tree = await this.send<{ sha: string }>("POST", this.api(`${r}/git/trees`), {
+      base_tree: parent.tree.sha,
+      tree: opts.files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
+    });
+    const commit = await this.send<{ sha: string }>("POST", this.api(`${r}/git/commits`), { message: opts.message, tree: tree.sha, parents: [head.object.sha] });
+    await this.send("POST", this.api(`${r}/git/refs`), { ref: `refs/heads/${opts.branch}`, sha: commit.sha });
+    const pr = await this.send<{ number: number; html_url: string }>("POST", this.api(`${r}/pulls`), { title: opts.title, head: opts.branch, base: opts.base, body: opts.body });
+    return { number: pr.number, url: pr.html_url, branch: opts.branch, commitSha: commit.sha };
+  }
+
   private api(path: string): string {
     return `https://api.github.com${path}`;
+  }
+
+  /** A JSON write to the REST API (no redirects are followed for writes). */
+  private async send<T = unknown>(method: "POST" | "PATCH", url: string, body: unknown): Promise<T> {
+    const res = await this.request(url, { method, body: JSON.stringify(body) });
+    const bytes = await readCapped(res, MAX_JSON_BYTES);
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
   }
 
   private async json<T>(url: string): Promise<T> {
@@ -222,7 +293,7 @@ export class GitHubClient {
     return JSON.parse(new TextDecoder().decode(bytes)) as T;
   }
 
-  private async request(initialUrl: string): Promise<Response> {
+  private async request(initialUrl: string, write?: { method: "POST" | "PATCH"; body: string }): Promise<Response> {
     let url = initialUrl;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const parsed = new URL(url);
@@ -230,12 +301,13 @@ export class GitHubClient {
         throw new GitHubError("Blocked request to a non-GitHub host.", 400, "forbidden");
       }
       const headers: Record<string, string> = { "User-Agent": "GitFill", Accept: "application/vnd.github+json" };
+      if (write) headers["Content-Type"] = "application/json";
       // Both hosts need the token for private repositories; raw.githubusercontent.com accepts the same bearer token.
       if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
       let res: Response;
       try {
-        res = await this.fetchImpl(url, { headers, redirect: "manual", signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
+        res = await this.fetchImpl(url, { method: write?.method ?? "GET", body: write?.body, headers, redirect: "manual", signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
       } catch (err) {
         if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
           throw new GitHubError("GitHub request timed out.", 504, "timeout");
@@ -244,6 +316,7 @@ export class GitHubClient {
       }
 
       if (res.status >= 300 && res.status < 400) {
+        if (write) throw new GitHubError("GitHub redirected a write request.", 502, "upstream");
         const location = res.headers.get("location");
         if (!location) throw new GitHubError("GitHub redirect without location.", 502, "upstream");
         url = new URL(location, url).toString();
@@ -251,7 +324,7 @@ export class GitHubClient {
       }
       if (res.ok) return res;
       if (res.status === 401 && this.token) await this.onUnauthorized?.();
-      throw toGitHubError(res);
+      throw write ? await toWriteError(res) : toGitHubError(res);
     }
     throw new GitHubError("Too many redirects from GitHub.", 502, "upstream");
   }
@@ -267,6 +340,19 @@ function toGitHubError(res: Response): GitHubError {
   }
   if (res.status === 403) return new GitHubError("GitHub denied access to this repository. If it is private, connect a GitHub account that can read it.", 403, "forbidden");
   return new GitHubError(`GitHub returned HTTP ${res.status}.`, 502, "upstream");
+}
+
+/** Write failures say what GitHub objected to (no push access, branch exists, protected branch). */
+async function toWriteError(res: Response): Promise<GitHubError> {
+  const detail = await res
+    .json()
+    .then((d: { message?: string; errors?: Array<{ message?: string }> }) => [d.message, ...(d.errors ?? []).map((e) => e.message)].filter(Boolean).join(": "))
+    .catch(() => "");
+  if (res.status === 401) return toGitHubError(res);
+  if (res.status === 403 || res.status === 404) {
+    return new GitHubError(`GitHub did not allow GitFill to write to this repository${detail ? ` (${detail})` : ""}. Your GitHub account needs push access, and the repo scope granted in Settings.`, 403, "forbidden");
+  }
+  return new GitHubError(`GitHub rejected the change (HTTP ${res.status}${detail ? `: ${detail}` : ""}).`, res.status, "upstream");
 }
 
 async function readCapped(res: Response, maxBytes: number): Promise<Uint8Array> {

@@ -24,6 +24,8 @@ function phaseOf(e: JobEvent): string | null {
   if (/^(inspect_repository|list_directory|read_file|search_code|grep|find_symbol|find_definition|outline_file|call_graph|list_files|record_claims|finish_analysis|finish_exploration|index_repository)/.test(n) || n.startsWith("analyze_repository") || n.startsWith("explore")) return "Analyzing repository";
   if (/^(plan_outline|compose_slide|plan_presentation|plan_revision)/.test(n)) return "Planning slides";
   if (n === "generate_illustration") return "Cover artwork";
+  if (/^(write_video|edit_video|preview_video|write_thumbnail|edit_thumbnail|preview_thumbnail|review_frame|finish_video)/.test(n)) return "Writing the video";
+  if (/^(render_video|add_soundtrack|verify_video|video_ready)/.test(n)) return "Rendering video";
   if (/^(render_slides|check_layout|visual_review|repair_slide|generate_pptx)/.test(n)) return "Rendering and validating";
   if (/^(generate_readme|write_readme|readme|compose_document|compose_handbook|compare|finish_comparison|compose)/.test(n)) return "Writing documents";
   return null;
@@ -53,6 +55,20 @@ const TITLES: Record<string, string> = {
   repair_slide_rule: "Rule repair",
   generate_pptx: "Package .pptx",
   generate_readme: "Write README.md",
+  read_gitfill: "Read the .gitfill folder",
+  finish_spec: "Finish the spec",
+  write_video: "Write the video",
+  edit_video: "Edit the video",
+  preview_video: "Preview frames",
+  write_thumbnail: "Write the thumbnail",
+  edit_thumbnail: "Edit the thumbnail",
+  preview_thumbnail: "Preview the thumbnail",
+  review_frame: "Review frame",
+  finish_video: "Finish the video",
+  render_video: "Render every frame",
+  add_soundtrack: "Add the soundtrack",
+  verify_video: "Verify the file",
+  video_ready: "Video ready",
 };
 
 /** Steps that repeat back to back collapse into one row. */
@@ -63,6 +79,10 @@ const GROUP_LABEL: Record<string, (n: number, items: JobEvent[]) => string> = {
   grep: (n) => `Ran ${n} searches`,
   record_claims: (n, items) => `Recorded claims in ${n} batches · ${items.reduce((a, e) => a + (Array.isArray(e.output) ? e.output.length : 0), 0)} claims`,
   compose_slide: (n) => `Composed ${n} slides`,
+  review_frame: (n, items) => {
+    const scores = items.map((e) => obj(e.output).score).filter((s): s is number => typeof s === "number");
+    return `Reviewed ${n} frames${scores.length ? ` · avg ${(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)}/10` : ""}`;
+  },
   visual_review: (n, items) => {
     const scores = items.map((e) => obj(e.output).score).filter((s): s is number => typeof s === "number");
     return `Reviewed ${n} slides${scores.length ? ` · avg ${(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)}/10` : ""}`;

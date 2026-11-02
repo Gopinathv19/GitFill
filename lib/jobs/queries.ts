@@ -116,7 +116,7 @@ export async function getDeckView(db: Database, deckId: string) {
         .orderBy(asc(artifacts.slideIndex))
     : [];
   const claims = await db.select().from(evidenceClaims).where(eq(evidenceClaims.snapshotId, snap.id)).orderBy(asc(evidenceClaims.createdAt));
-  const pending = await db.select({ id: generationJobs.id, status: generationJobs.status }).from(generationJobs).where(eq(generationJobs.deckId, deckId)).orderBy(desc(generationJobs.createdAt)).limit(1);
+  const pending = await db.select({ id: generationJobs.id, status: generationJobs.status, kind: generationJobs.kind }).from(generationJobs).where(eq(generationJobs.deckId, deckId)).orderBy(desc(generationJobs.createdAt)).limit(1);
   const summary = snap.summary as { analysis?: unknown; stats?: unknown; agent?: unknown } | null;
 
   return {
@@ -145,7 +145,7 @@ export async function getDeckView(db: Database, deckId: string) {
       validation: v.validation,
       artifacts: files
         .filter((a) => a.deckVersionId === v.id)
-        .map((a) => ({ id: a.id, type: a.artifactType, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes, slideIndex: a.slideIndex })),
+        .map((a) => ({ id: a.id, type: a.artifactType, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes, slideIndex: a.slideIndex, jobId: a.jobId, createdAt: a.createdAt })),
     })),
   };
 }

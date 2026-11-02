@@ -1,5 +1,5 @@
 import { MuseClient } from "@/lib/ai/client";
-import type { MemoryRecorder } from "@/lib/agent/recorder";
+import type { MemoryRecorder, RunRecorder } from "@/lib/agent/recorder";
 import { env } from "@/lib/config/env";
 import { getSnapshot } from "@/lib/connectors/cache";
 import type { GitHubClient } from "@/lib/connectors/github/client";
@@ -42,7 +42,7 @@ export async function answerGitHubQuestion(opts: { url: string; branch?: string;
  * branch with the caller's own client is the access check: a repository the caller cannot read
  * fails here, before anything is served from the shared store.
  */
-export async function openGitHubSource(opts: { url: string; branch?: string; client: GitHubClient; recorder: MemoryRecorder }) {
+export async function openGitHubSource(opts: { url: string; branch?: string; client: GitHubClient; recorder: RunRecorder }) {
   const ref = parseGitHubUrl(opts.url);
   const headStep = await opts.recorder.start("step", "repo_head", { repository: `${ref.owner}/${ref.repo}` });
   const [repo, commit] = await Promise.all([opts.client.getRepo(ref.owner, ref.repo), opts.client.getCommit(ref.owner, ref.repo, opts.branch ?? ref.branch ?? "HEAD")]);
@@ -63,7 +63,7 @@ export async function openGitHubSource(opts: { url: string; branch?: string; cli
 }
 
 /** A CodeSource for the caller's repository: the repo store when it can serve it, else the cached snapshot. */
-export async function openRepositorySource(opts: { url: string; branch?: string; client: GitHubClient; recorder: MemoryRecorder }): Promise<CodeSource> {
+export async function openRepositorySource(opts: { url: string; branch?: string; client: GitHubClient; recorder: RunRecorder }): Promise<CodeSource> {
   try {
     return (await openGitHubSource(opts)).source;
   } catch (err) {

@@ -17,6 +17,9 @@ export const PIPELINES: Record<JobView["kind"], string[]> = {
   handbook: ["analyzing_repository", "composing_document", "completed"],
   reuse: ["analyzing_repository", "composing_document", "completed"],
   compare: ["analyzing_repository", "comparing_commits", "composing_document", "completed"],
+  video: ["composing_video", "rendering_video", "completed"],
+  readme: ["analyzing_repository", "composing_document", "completed"],
+  brainstorm: ["analyzing_repository", "composing_document", "completed"],
 };
 
 /** Live view of one job. Every row comes from recorded agent_events; nothing is simulated. */

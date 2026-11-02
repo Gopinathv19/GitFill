@@ -150,7 +150,9 @@ export function selectFiles(entries: TreeEntry[], limits: SelectionLimits = DEFA
   for (const entry of entries) {
     if (entry.type !== "blob") continue;
     const size = entry.size ?? 0;
-    const reason = exclusionReason(entry.path);
+    // The repository's GitFill folder is user context and GitFill's own output, not code evidence:
+    // it is read separately (lib/gitfill) so generated docs never become claims about the code.
+    const reason = exclusionReason(entry.path) ?? (entry.path.startsWith(".gitfill/") ? "gitfill_folder" : undefined);
     if (reason) {
       inventory.push({ path: entry.path, sizeBytes: size, selected: false, skipReason: reason });
       continue;

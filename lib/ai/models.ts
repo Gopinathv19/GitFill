@@ -24,7 +24,9 @@ export type ModelRole =
   /** Composing handbooks and implementation briefs from gathered evidence: few calls, high stakes. */
   | "architect"
   /** Interpreting structural diffs between commits. */
-  | "differ";
+  | "differ"
+  /** Writing and iterating on videos and thumbnails (tool loop over HTML scenes): few calls, large outputs. */
+  | "director";
 
 const STANDARD: Record<ModelRole, string> = {
   planner: "muse-wonder-1.0",
@@ -37,6 +39,7 @@ const STANDARD: Record<ModelRole, string> = {
   explainer: "muse-spark-1.3",
   architect: "muse-wonder-1.0",
   differ: "muse-spark-1.3",
+  director: "muse-wonder-1.0",
 };
 
 /** Roles allowed to drop to the contributor tier in development (never planner: it has no Wonder contributor tier). */

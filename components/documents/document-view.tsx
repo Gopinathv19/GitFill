@@ -14,6 +14,7 @@ import { api, errorMessage } from "@/lib/client/api";
 import { rememberDocument } from "@/lib/client/recent-documents";
 import type { DocumentView as DocumentViewData } from "@/lib/client/types";
 import { cn } from "@/lib/utils";
+import { PullRequestButton } from "./pull-request-button";
 
 /** A generated document: rendered Markdown with Mermaid, plus its evidence table and sources. */
 export function DocumentView({ documentId }: { documentId: string }) {
@@ -73,6 +74,7 @@ export function DocumentView({ documentId }: { documentId: string }) {
             {doc.job && (
               <Button asChild variant="ghost" size="sm"><Link href={`/jobs/${doc.job.id}`}>Activity</Link></Button>
             )}
+            {doc.repository || doc.snapshots.length ? <PullRequestButton documentId={doc.id} kind={doc.kind} metadata={doc.metadata} /> : null}
             <Button asChild variant="outline" size="sm"><a href={`/api/documents/${doc.id}/download?format=md`}><Download />Markdown</a></Button>
             <Button asChild variant="outline" size="sm"><a href={`/api/documents/${doc.id}/download?format=json`}><FileJson />JSON</a></Button>
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" aria-label="Delete document" onClick={() => void remove()}><Trash2 /></Button>

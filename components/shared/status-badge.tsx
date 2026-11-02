@@ -12,6 +12,8 @@ export const STAGE_LABELS: Record<string, string> = {
   generating_documents: "Writing documents",
   comparing_commits: "Comparing commits",
   composing_document: "Composing document",
+  composing_video: "Writing the video",
+  rendering_video: "Rendering video",
   completed: "Completed",
   failed: "Failed",
 };
@@ -35,6 +37,9 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   handbook: "Handbook",
   compare: "Commit comparison",
   reuse: "Implementation brief",
+  video: "Video",
+  readme: "README",
+  brainstorm: "Brainstorm spec",
 };
 
 export const DOCUMENT_KIND_LABELS: Record<string, string> = {
@@ -42,4 +47,6 @@ export const DOCUMENT_KIND_LABELS: Record<string, string> = {
   commit_report: "Commit report",
   implementation_brief: "Implementation brief",
   explanation: "Explanation",
+  readme: "README",
+  brainstorm: "Brainstorm spec",
 };

@@ -36,7 +36,7 @@ export class RenderError extends Error {
 let shared: Promise<Browser> | null = null;
 
 /** One Chromium per process, launched on first use and relaunched if it dies. */
-async function browser(): Promise<Browser> {
+export async function browser(): Promise<Browser> {
   if (shared) {
     const b = await shared.catch(() => null);
     if (b?.isConnected()) return b;

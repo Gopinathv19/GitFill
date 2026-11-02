@@ -25,14 +25,16 @@ export const jobStatus = pgEnum("job_status", [
   "generating_documents",
   "comparing_commits",
   "composing_document",
+  "composing_video",
+  "rendering_video",
   "completed",
   "failed",
 ]);
 
-/** generate/revise produce decks; handbook, compare and reuse produce documents. */
-export const jobKind = pgEnum("job_kind", ["generate", "revise", "handbook", "compare", "reuse"]);
+/** generate/revise produce decks; video adds a video and thumbnail to a deck; handbook, compare and reuse produce documents. */
+export const jobKind = pgEnum("job_kind", ["generate", "revise", "handbook", "compare", "reuse", "video", "readme", "brainstorm"]);
 
-export const documentKind = pgEnum("document_kind", ["handbook", "commit_report", "implementation_brief", "explanation"]);
+export const documentKind = pgEnum("document_kind", ["handbook", "commit_report", "implementation_brief", "explanation", "readme", "brainstorm"]);
 
 export const artifactType = pgEnum("artifact_type", [
   "pptx",
@@ -41,6 +43,9 @@ export const artifactType = pgEnum("artifact_type", [
   "slide_preview",
   "evidence_report",
   "illustration",
+  "video",
+  "thumbnail",
+  "video_source",
 ]);
 
 export const claimStatus = pgEnum("claim_status", ["verified", "inferred", "unverified"]);

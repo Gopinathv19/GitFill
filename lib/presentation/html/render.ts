@@ -27,9 +27,11 @@ export interface RenderContext {
 
 const ASSET_DIR = path.join(process.cwd(), "lib", "presentation");
 let cachedStatic: string | null = null;
+let cachedFonts: string | null = null;
 
-function staticCss(): string {
-  if (cachedStatic) return cachedStatic;
+/** @font-face rules for Geist and Geist Mono as data URIs, so pages render the same on any machine. */
+export function embeddedFontCss(): string {
+  if (cachedFonts) return cachedFonts;
   const font = (file: string, family: string, weight: number) =>
     `@font-face{font-family:"${family}";src:url(data:font/woff2;base64,${readFileSync(path.join(ASSET_DIR, "assets", "fonts", file)).toString("base64")}) format("woff2");font-weight:${weight};font-display:block}`;
   const fonts = [
@@ -40,7 +42,13 @@ function staticCss(): string {
     font("GeistMono-Regular.woff2", "Geist Mono", 400),
     font("GeistMono-Medium.woff2", "Geist Mono", 500),
   ].join("\n");
-  cachedStatic = `${fonts}\n${readFileSync(path.join(ASSET_DIR, "html", "deck.css"), "utf8")}`;
+  cachedFonts = fonts;
+  return fonts;
+}
+
+function staticCss(): string {
+  if (cachedStatic) return cachedStatic;
+  cachedStatic = `${embeddedFontCss()}\n${readFileSync(path.join(ASSET_DIR, "html", "deck.css"), "utf8")}`;
   return cachedStatic;
 }
 

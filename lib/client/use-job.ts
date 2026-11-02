@@ -7,7 +7,7 @@ import { api } from "./api";
 
 export interface JobView {
   id: string;
-  kind: "generate" | "revise" | "handbook" | "compare" | "reuse";
+  kind: "generate" | "revise" | "handbook" | "compare" | "reuse" | "video" | "readme" | "brainstorm";
   status: string;
   repositoryUrl: string;
   branch: string | null;

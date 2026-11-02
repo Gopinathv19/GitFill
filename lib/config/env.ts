@@ -24,6 +24,15 @@ const envSchema = z.object({
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
   /** OAuth scopes requested at sign-in. "repo" is what grants read access to the user's private repositories. */
   GITHUB_OAUTH_SCOPES: z.string().default("read:user user:email repo"),
+  /**
+   * GitFill's GitHub App, which opens pull requests as "<slug>[bot]" instead of as the user.
+   * Needs Contents and Pull requests: read & write. Unset = pull requests are opened with the user's own token.
+   */
+  GITHUB_APP_ID: z.string().regex(/^\d+$/).optional(),
+  /** The app's private key (PEM). Newlines may be written as \n on one line. */
+  GITHUB_APP_PRIVATE_KEY: z.string().min(100).optional(),
+  /** The app's URL name (github.com/apps/<slug>), for install links. */
+  GITHUB_APP_SLUG: z.string().regex(/^[a-z0-9-]+$/).optional(),
   /** Key that encrypts users' GitHub tokens at rest (32+ chars, e.g. `openssl rand -hex 32`). Required in production. */
   TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
   /** "true" runs queued jobs inside the web process (no separate worker). Automatic for pglite: databases. */

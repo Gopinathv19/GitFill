@@ -22,11 +22,13 @@ import { getStorage, safeFilename } from "@/lib/storage";
 import { generateRequestSchema, reviseRequestSchema } from "@/lib/validation/request";
 import { DbRecorder } from "./db-recorder";
 import { runCompareJob, runHandbookJob, runReuseJob } from "./document-jobs";
+import { runBrainstormJob, runReadmeJob } from "./gitfill-jobs";
+import { runVideoJob } from "./video-job";
 
 type Job = typeof generationJobs.$inferSelect;
 type ExtraArtifact = { type: ArtifactType; name: string; data: Buffer; mime: string };
 
-interface SnapshotSummary {
+export interface SnapshotSummary {
   displayName: string;
   description: string | null;
   stats: SourceSnapshot["stats"];
@@ -57,6 +59,15 @@ export async function runJob(db: Database, job: Job): Promise<void> {
       case "reuse":
         await runReuseJob(db, job, recorder, client);
         break;
+      case "video":
+        await runVideoJob(db, job, recorder, client);
+        break;
+      case "readme":
+        await runReadmeJob(db, job, recorder, client);
+        break;
+      case "brainstorm":
+        await runBrainstormJob(db, job, recorder, client);
+        break;
     }
     await recorder.finish("completed");
   } catch (err) {
@@ -78,6 +89,12 @@ function modelLabel(kind: Job["kind"]): string {
       return `${modelFor("analyst")} + ${modelFor("architect")}`;
     case "compare":
       return modelFor("differ");
+    case "video":
+      return `${modelFor("director")} + ${modelFor("reviewer")}`;
+    case "readme":
+      return `${modelFor("analyst")} + ${modelFor("writer")}`;
+    case "brainstorm":
+      return modelFor("analyst");
   }
 }
 
@@ -336,7 +353,7 @@ function toClaim(row: typeof evidenceClaims.$inferSelect): Claim {
 /** Error text safe to show users: known error classes pass through, everything else is generic. */
 export function publicErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    const safe = ["RevisionError", "InvalidRepositoryUrlError", "GitHubError", "ModelError", "StructuredOutputError", "ToolLoopError", "RenderError", "ConfigError", "ZodError"];
+    const safe = ["AppNotInstalledError", "DeliveryError", "SceneError", "RevisionError", "InvalidRepositoryUrlError", "GitHubError", "ModelError", "StructuredOutputError", "ToolLoopError", "RenderError", "ConfigError", "ZodError"];
     if (safe.includes(err.name)) return err.message.slice(0, 500);
   }
   return "Unexpected error while running this job. See server logs for details.";

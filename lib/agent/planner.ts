@@ -188,7 +188,8 @@ async function composeSlide(opts: {
   audience: string;
 }): Promise<Slide> {
   const { item } = opts;
-  if (item.layout === "contents") return contentsSlide.parse({ id: item.id, layout: "contents", title: item.title || "Contents", lede: item.intent.slice(0, 160) });
+  // The contents title is short by design; a long outline title would fail the whole deck here.
+  if (item.layout === "contents") return contentsSlide.parse({ id: item.id, layout: "contents", title: item.title && item.title.length <= 40 ? item.title : "Contents", lede: item.intent.slice(0, 160) });
 
   const schema =
     item.layout === "cover"

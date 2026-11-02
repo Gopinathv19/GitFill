@@ -6,12 +6,22 @@ import type { Database } from "@/lib/db";
 import { generationJobs, projects, repositorySnapshots } from "@/lib/db/schema";
 import { saveDocument } from "@/lib/jobs/document-jobs";
 import { kickInlineWorker } from "@/lib/jobs/inline";
-import { ACTIVE_STATUSES, enqueueDocumentJob, enqueueGeneration, enqueueRevision } from "@/lib/jobs/queue";
+import { ACTIVE_STATUSES, enqueueDocumentJob, enqueueGeneration, enqueueRevision, enqueueVideo } from "@/lib/jobs/queue";
 import { logTimings } from "@/lib/agent/timings";
 import { answerGitHubQuestion, openRepositorySource } from "@/lib/understanding/ask";
 import { compareRequestSchema, handbookRequestSchema, type AskRequest, type CompareRequest, type HandbookRequest, type ReuseKind } from "@/lib/understanding/schemas";
-import { generateRequestSchema, type GenerateRequest } from "@/lib/validation/request";
-import { assertDeckAccess, getRepository } from "./service";
+import { openDocumentPullRequest } from "@/lib/gitfill/deliver";
+import {
+  brainstormRequestSchema,
+  generateRequestSchema,
+  readmeRequestSchema,
+  videoRequestSchema,
+  type BrainstormRequest,
+  type GenerateRequest,
+  type ReadmeRequest,
+  type VideoRequest,
+} from "@/lib/validation/request";
+import { assertDeckAccess, assertDocumentAccess, getRepository } from "./service";
 
 export class ActionError extends Error {
   override name = "ActionError";
@@ -48,6 +58,46 @@ export async function revisePresentation(db: Database, userId: string, deckId: s
   const job = await enqueueRevision(db, deck, snap.repositoryUrl, instruction);
   kickInlineWorker(db);
   return { job, deck };
+}
+
+/** Queues a video and thumbnail for a deck the user owns, refusing while another job runs on it. */
+export async function startVideo(db: Database, userId: string, deckId: string, options: Partial<VideoRequest>) {
+  const { deck, workspaceId } = await assertDeckAccess(db, userId, deckId);
+  const busy = await db
+    .select({ id: generationJobs.id })
+    .from(generationJobs)
+    .where(and(eq(generationJobs.deckId, deckId), inArray(generationJobs.status, ["pending", ...ACTIVE_STATUSES])));
+  if (busy.length) throw new ActionError("Another job is already running for this presentation.");
+  const snap = (await db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)))[0]!;
+  const job = await enqueueVideo(db, deck, snap.repositoryUrl, videoRequestSchema.parse(options));
+  kickInlineWorker(db);
+  return { job, deck, workspaceId };
+}
+
+/** Queues README.md written or updated from the code and the repository's .gitfill folder. */
+export async function startReadme(db: Database, userId: string, workspaceId: string, repositoryId: string, options: Partial<ReadmeRequest>) {
+  const repo = await getRepository(db, userId, workspaceId, repositoryId);
+  const url = requireUrl(repo);
+  const request = readmeRequestSchema.parse({ ...options, branch: options.branch ?? repo.defaultBranch ?? undefined });
+  const job = await enqueueDocumentJob(db, { workspaceId, repositoryId }, { kind: "readme", repositoryUrl: url, branch: request.branch, prompt: `README.md for ${repo.owner}/${repo.name}. ${request.instructions}`.trim(), options: request, projectName: `${repo.owner}/${repo.name}` });
+  kickInlineWorker(db);
+  return { job, repo, request };
+}
+
+/** Queues a brainstorm from chat to be written up as an implementation spec. */
+export async function startBrainstorm(db: Database, userId: string, workspaceId: string, repositoryId: string, options: Partial<BrainstormRequest>) {
+  const repo = await getRepository(db, userId, workspaceId, repositoryId);
+  const url = requireUrl(repo);
+  const request = brainstormRequestSchema.parse({ ...options, branch: options.branch ?? repo.defaultBranch ?? undefined });
+  const job = await enqueueDocumentJob(db, { workspaceId, repositoryId }, { kind: "brainstorm", repositoryUrl: url, branch: request.branch, prompt: `Brainstorm spec: ${request.title}`, options: request, projectName: `${repo.owner}/${repo.name}` });
+  kickInlineWorker(db);
+  return { job, repo, request };
+}
+
+/** Opens a pull request that puts a document in its place in the repository (.gitfill/ or README.md). */
+export async function openPullRequest(db: Database, userId: string, documentId: string) {
+  const row = await assertDocumentAccess(db, userId, documentId);
+  return openDocumentPullRequest(db, userId, row);
 }
 
 /** Queues a repository, module or feature handbook. */
