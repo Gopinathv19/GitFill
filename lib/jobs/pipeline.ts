@@ -94,7 +94,7 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   await db.update(generationJobs).set({ branch: snapshot.branch, commitSha: snapshot.version }).where(eq(generationJobs.id, job.id));
 
   // 2. Analysis agent: real tool loop with verified evidence.
-  const analysis = await analyzeRepository({ client, snapshot, userRequest: `${request.purpose} Audience: ${request.audience}. ${request.instructions}`, recorder });
+  const analysis = await analyzeRepository({ client, snapshot, userRequest: [request.brief ? `Reader brief agreed with the user:\n${request.brief}` : "", `${request.purpose} Audience: ${request.audience}. ${request.instructions}`].filter(Boolean).join("\n"), recorder });
 
   const summary: SnapshotSummary = {
     displayName: snapshot.displayName,
@@ -151,13 +151,7 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   // 5. Render → check → repair.
   const built = await buildValidatedDeck({
     spec,
-    repoLabel: `${snapshot.displayName} · ${snapshot.branch}`,
-    evidenceLabel: `${snapshot.displayName} @ ${snapshot.version.slice(0, 7)}`,
-    coverMeta: [
-      ["Repository", snapshot.displayName],
-      ["Commit", `${snapshot.branch} · ${snapshot.version.slice(0, 7)}`],
-      ["Audience", spec.audience],
-    ],
+    ...deckLabels(spec, snapshot.displayName, snapshot.branch, snapshot.version),
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
     evidence: deckEvidence({ snapshot, analysis: analysis.analysis, claims: analysis.claims }),
@@ -203,6 +197,8 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
     : undefined;
 
   const plan = await planRevision({ client, spec: current, instruction, claims, evidence, recorder });
+  // Nothing to change: report why instead of saving an identical version.
+  if (!plan.operations.length) throw new RevisionError(`This revision changed nothing: ${plan.summary}`);
   const applied = applyRevision(current, plan);
   const { spec } = normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)));
 
@@ -212,13 +208,7 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   const themeChanged = spec.theme !== current.theme;
   const built = await buildValidatedDeck({
     spec,
-    repoLabel: `${snap.owner}/${snap.name} · ${snap.branch}`,
-    evidenceLabel: `${snap.owner}/${snap.name} @ ${snap.commitSha.slice(0, 7)}`,
-    coverMeta: [
-      ["Repository", `${snap.owner}/${snap.name}`],
-      ["Commit", `${snap.branch} · ${snap.commitSha.slice(0, 7)}`],
-      ["Audience", spec.audience],
-    ],
+    ...deckLabels(spec, `${snap.owner}/${snap.name}`, snap.branch, snap.commitSha),
     workDir: getStorage().localPath(`work/${job.id}`),
     illustrations: illustrationPaths(assets),
     evidence,
@@ -316,6 +306,20 @@ async function makeIllustrations(spec: DeckSpec, prefix: string, recorder: DbRec
   return assets;
 }
 
+/** Header, footer and cover labels; the commit SHA is left out when the deck hides it. */
+function deckLabels(spec: DeckSpec, repository: string, branch: string, sha: string) {
+  const commit = spec.showCommit ? sha.slice(0, 7) : "";
+  return {
+    repoLabel: `${repository} · ${branch}`,
+    evidenceLabel: commit ? `${repository} @ ${commit}` : repository,
+    coverMeta: [["Repository", repository], spec.showCommit ? ["Commit", `${branch} · ${commit}`] : ["Branch", branch], ["Audience", spec.audience]] as Array<[string, string]>,
+  };
+}
+
+class RevisionError extends Error {
+  override name = "RevisionError";
+}
+
 function illustrationPaths(assets: Record<string, string>): Map<string, string> {
   return new Map(Object.entries(assets).map(([slideId, key]) => [slideId, getStorage().localPath(key)]));
 }
@@ -337,7 +341,7 @@ function toClaim(row: typeof evidenceClaims.$inferSelect): Claim {
 /** Error text safe to show users: known error classes pass through, everything else is generic. */
 export function publicErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    const safe = ["InvalidRepositoryUrlError", "GitHubError", "ModelError", "StructuredOutputError", "ToolLoopError", "RenderError", "ConfigError", "ZodError"];
+    const safe = ["RevisionError", "InvalidRepositoryUrlError", "GitHubError", "ModelError", "StructuredOutputError", "ToolLoopError", "RenderError", "ConfigError", "ZodError"];
     if (safe.includes(err.name)) return err.message.slice(0, 500);
   }
   return "Unexpected error while running this job. See server logs for details.";

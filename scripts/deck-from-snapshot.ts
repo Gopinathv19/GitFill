@@ -20,10 +20,13 @@ import { generateRequestSchema } from "@/lib/validation/request";
  * claims (no repository re-analysis, nothing written to the database).
  * Usage: npx tsx scripts/deck-from-snapshot.ts <deckId> [slideCount] [outDir] [--spec=spec.json]
  *   --spec skips planning and rebuilds a saved spec.
+ *   --brief=brief.txt plans for a reader brief (as agreed in chat); --audience="…" overrides the audience.
  */
 async function main() {
   const [deckId, count = "10", outArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
   const specArg = process.argv.find((a) => a.startsWith("--spec="))?.slice(7);
+  const briefArg = process.argv.find((a) => a.startsWith("--brief="))?.slice(8);
+  const audience = process.argv.find((a) => a.startsWith("--audience="))?.slice(11) ?? "Engineering team";
   if (!deckId) throw new Error("usage: deck-from-snapshot <deckId> [slideCount] [outDir]");
   const out = path.resolve(outArg ?? path.join("storage/sample/from-snapshot"));
   const db = getDb();
@@ -56,7 +59,8 @@ async function main() {
   if (specArg) {
     spec = deckSpecSchema.parse(JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(specArg, "utf8"))));
   } else {
-    const request = generateRequestSchema.parse({ repositoryUrl: snap.repositoryUrl, audience: "Engineering team", slideCount: Number(count) });
+    const brief = briefArg ? await import("node:fs/promises").then((fs) => fs.readFile(briefArg, "utf8")) : "";
+    const request = generateRequestSchema.parse({ repositoryUrl: snap.repositoryUrl, audience, slideCount: Number(count), brief });
     ({ spec } = await planDeck({ client, snapshot, analysis: summary.analysis, claims, request, recorder }));
     console.log(`planned in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     await import("node:fs/promises").then((fs) => fs.mkdir(out, { recursive: true }));

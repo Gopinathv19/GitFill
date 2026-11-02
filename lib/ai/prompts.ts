@@ -95,7 +95,7 @@ ${DECK_GUIDE}
 
 Planning rules
 - Slide 1 is the cover (layout "cover"). With 9 or more slides, slide 2 is the contents page (layout "contents"); otherwise there is no contents page. All other slides are "page".
-- Group pages into 3-6 sections, in an order that tells the story: what it is and why → capabilities → architecture → how the key flows work → data and integrations → security / operations / setup → reference. Drop sections the evidence cannot support; spend more pages where the repository is rich.
+- Group pages into 3-6 sections, in an order that tells the story. When a reader brief is given, it decides the framing (e.g. product story for judges vs. engineering walkthrough), which sections exist, their order, what to feature by name and what to skip; plan the deck that reader needs. Without a brief, use: what it is and why → capabilities → architecture → how the key flows work → data and integrations → security / operations / setup → reference. Drop sections the evidence cannot support; spend more pages where the repository is rich or the brief asks for depth.
 - One idea per page and no repetition across pages. Use at least three different diagram kinds when the evidence supports them (architecture, flow, sequence, states, decision).
 - For each page, intent names the analysis items (components, data flow steps, APIs, models, setup steps) and the claim refs the page must use, and blocks lists the block types to use in order (main column first), following a recipe.
 - Use slide ids s1, s2, ... in order.
@@ -110,6 +110,7 @@ ${DECK_GUIDE}
 
 Composition rules
 - Keep the slide id, layout and section from the brief. You may sharpen the title.
+- When a reader brief is given, write for that reader: their vocabulary, the framing and names it asks for.
 - Follow the brief's blocks unless the evidence clearly calls for a better block; never leave the page thin.
 - Do not repeat what other pages in the outline cover; stay on this page's idea.
 - For the cover: title is a claim about what the project does (not just its name), with the key phrase in *asterisks*; subtitle says what the deck covers; visual is a "terminal" with real setup commands from the evidence, a "tree" of the real top-level paths with notes, or "stats" with real numbers; meta lists repository, commit and audience.
@@ -122,13 +123,14 @@ ${UNTRUSTED_CONTENT_RULE}
 
 ${DECK_GUIDE}
 
-Return a list of operations:
-- replace: a full new version of an existing slide (keep its id).
-- insert: a new slide placed after an existing slide id (use "start" to insert first). Give it a new unused id.
+Return a list of operations (another writer composes the slides from them):
+- replace: change an existing slide; "change" says exactly what to change and what to keep.
+- insert: a new slide placed after an existing slide id (use "start" to insert first), with its layout, section, title and a "change" brief naming the analysis items and claim refs it must use.
 - delete: remove a slide by id.
 - move: move an existing slide to after another id (or "start").
 - set_theme: switch the deck theme.
-Do not include operations for slides the request does not affect. New and replaced slides must meet the full page quality bar. Summarize the change in one or two sentences.`;
+- hide_commit / show_commit: hide or show the commit SHA that the page footers and the cover print (they are added at render time, not stored in slides).
+Cover every part of the request: a request that asks for two changes needs (at least) two operations. Do not include operations for slides the request does not affect. If nothing in the specification can carry out the request, return no operations and say why in the summary. New and replaced slides must meet the full page quality bar. Summarize the change in one or two sentences.`;
 
 export const REPAIR_SYSTEM_PROMPT = `You are GitFill's page repairer. You receive one page's specification, its rendered image, the defects the application measured, and the repository evidence. Return a corrected version of the page.
 

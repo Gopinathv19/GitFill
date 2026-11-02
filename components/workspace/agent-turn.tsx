@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
+import { DataView, hasData } from "@/components/shared/data-view";
 import { Markdown } from "@/components/shared/markdown";
 import { describeActivity, type Activity } from "@/lib/client/activity";
 import type { Segment, Turn, WorkItem } from "@/lib/client/turn";
@@ -48,12 +49,11 @@ function Disclosure({ label, open, onToggle, running, children }: { label: strin
 }
 
 function IoPanel({ label, value, tone }: { label: string; value: unknown; tone?: "error" }) {
-  if (value === undefined || value === null || value === "" || (typeof value === "object" && !Object.keys(value as object).length)) return null;
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (!hasData(value)) return null;
   return (
-    <div className="overflow-hidden rounded-lg border bg-muted/40">
-      <p className="px-3 pt-2 text-[11px] text-muted-foreground">{label}</p>
-      <pre className={cn("max-h-56 overflow-auto whitespace-pre-wrap break-words px-3 pb-2.5 pt-1 font-mono text-[11.5px] leading-relaxed", tone === "error" ? "text-destructive" : "text-foreground/80")}>{text}</pre>
+    <div className="overflow-hidden rounded-lg border bg-muted/40 px-3 py-2.5">
+      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      {tone === "error" ? <p className="text-[12.5px] text-destructive">{String(value)}</p> : <DataView value={value} />}
     </div>
   );
 }

@@ -131,7 +131,7 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
               </p>
             </div>
           )}
-          {messages?.map((m) =>
+          {messages?.map((m, i) =>
             m.role === "user" ? (
               <div key={m.id} className="flex justify-end">
                 <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-muted px-4 py-2 text-sm">{m.content}</div>
@@ -139,7 +139,7 @@ export function ChatPanel({ workspaceId, sessionId, repositories, onActivity }: 
             ) : (
               <div key={m.id} className="flex flex-col gap-3">
                 {traces[m.id] ? <AgentTurn turn={traces[m.id]!} /> : null}
-                <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} />
+                <AssistantMessage content={m.content} onAsk={sending ? undefined : ask} answerable={i === messages.length - 1} />
                 {m.jobIds.map((id) => (
                   <div key={id} className="w-full min-w-72">
                     <JobCard jobId={id} onFinished={onActivity} />

@@ -9,6 +9,8 @@ export const generateRequestSchema = z.object({
   slideCount: z.number().int().min(4).max(16).default(10),
   theme: z.enum(THEMES).default("midnight"),
   instructions: z.string().trim().max(2000).default(""),
+  /** The reader brief agreed with the user in chat: who reads it, why, framing, must-cover and skip. */
+  brief: z.string().trim().max(4000).default(""),
   outputs: z
     .object({
       pdf: z.boolean().default(true),

@@ -1,15 +1,18 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileCheck2, Loader2, ShieldCheck } from "lucide-react";
+import { ActivityTimeline } from "@/components/jobs/activity-timeline";
+import { JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/components/shared/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader as UiCardHeader, CardTitle } from "@/components/ui/card";
 import { Select, Textarea } from "@/components/ui/input";
 import { Segmented } from "@/components/workspace/segmented";
 import { api, ApiError } from "@/lib/client/api";
+import { revisionProgress } from "@/lib/client/revision-progress";
+import { useJob, type JobView } from "@/lib/client/use-job";
 import { cn as cx } from "@/lib/utils";
 
 /** Card header with title, description and an optional action, in SysOne style. */
@@ -87,44 +90,81 @@ export function PresentationView({ deckId }: { deckId: string }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [slide, setSlide] = useState(0);
   const [tab, setTab] = useState<"validation" | "evidence">("validation");
+  // The revision being followed on this page: started here, or already running when the page opened.
+  const [liveJobId, setLiveJobId] = useState<string | null>(null);
+  const { job: live, now } = useJob(liveJobId);
+  const running = live !== null && !TERMINAL.has(live.status);
+
+  const load = useCallback(
+    () =>
+      api<DeckView>(`/api/presentations/${deckId}`)
+        .then((d) => {
+          setDeck(d);
+          setSelected(d.versions[0]?.version ?? null);
+          return d;
+        })
+        .catch((e: Error) => {
+          setError(e.message);
+          return null;
+        }),
+    [deckId],
+  );
 
   useEffect(() => {
-    api<DeckView>(`/api/presentations/${deckId}`)
-      .then((d) => {
-        setDeck(d);
-        setSelected(d.versions[0]?.version ?? null);
-      })
-      .catch((e: Error) => setError(e.message));
-  }, [deckId]);
+    void load().then((d) => {
+      if (d?.latestJob && !TERMINAL.has(d.latestJob.status)) setLiveJobId(d.latestJob.id);
+    });
+  }, [load]);
+
+  // A finished revision becomes the latest version: reload and show it.
+  useEffect(() => {
+    if (live?.status !== "completed") return;
+    void load().then(() => {
+      setSlide(0);
+      setLiveJobId(null);
+    });
+  }, [live?.status, load]);
 
   const version = useMemo(() => deck?.versions.find((v) => v.version === selected), [deck, selected]);
   const previews = useMemo(
     () => (version?.artifacts ?? []).filter((a) => a.type === "slide_preview").sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)),
     [version],
   );
+  const progress = useMemo(() => (running && live ? revisionProgress(live) : null), [running, live]);
+  // While a revision runs, the newest render round replaces the stored previews.
+  const frames = useMemo<Frame[]>(() => {
+    const titles = new Map((version?.spec.slides ?? []).map((s) => [s.id, plain(s.title)]));
+    if (progress?.render && live) {
+      const { round, slideIds } = progress.render;
+      return slideIds.map((id, i) => ({ key: `${round}-${id}`, src: `/api/jobs/${live.id}/preview?round=${round}&slide=${i + 1}`, slideId: id, title: titles.get(id) ?? "New slide" }));
+    }
+    return previews.map((p, i) => {
+      const id = version?.spec.slides[i]?.id ?? "";
+      return { key: p.id, src: `/api/artifacts/${p.id}`, slideId: id, title: titles.get(id) ?? "" };
+    });
+  }, [previews, version, progress, live]);
 
   // Arrow keys page through the slides, unless the user is typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT" || target.isContentEditable)) return;
-      if (e.key === "ArrowRight") setSlide((n) => Math.min(n + 1, Math.max(previews.length - 1, 0)));
+      if (e.key === "ArrowRight") setSlide((n) => Math.min(n + 1, Math.max(frames.length - 1, 0)));
       if (e.key === "ArrowLeft") setSlide((n) => Math.max(n - 1, 0));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previews.length]);
+  }, [frames.length]);
 
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!deck || !version) return <p className="text-sm text-muted-foreground">Loading presentation…</p>;
 
   const file = (type: Artifact["type"]) => version.artifacts.find((a) => a.type === type);
-  const index = Math.min(slide, Math.max(previews.length - 1, 0));
-  const current = previews[index];
+  const index = Math.min(slide, Math.max(frames.length - 1, 0));
+  const current = frames[index];
   const repo = deck.repository;
   const unresolved = version.validation?.summary.unresolved ?? 0;
-  // Slide titles may carry *accent* marks for the rendered page; show them as plain text here.
-  const titleOf = (i: number) => (version.spec.slides[i]?.title ?? "").replace(/\*+([^*]+)\*+/g, "$1");
+  const busy = (id: string) => progress?.busy.has(id) ?? false;
   const goTo = (i: number) => {
     setSlide(i);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -151,7 +191,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select aria-label="Version" value={selected ?? undefined} onChange={(e) => { setSelected(Number(e.target.value)); setSlide(0); }} className="h-9 w-auto">
+          <Select aria-label="Version" disabled={running} value={selected ?? undefined} onChange={(e) => { setSelected(Number(e.target.value)); setSlide(0); }} className="h-9 w-auto">
             {deck.versions.map((v) => (
               <option key={v.version} value={v.version}>
                 Version {v.version}
@@ -168,39 +208,63 @@ export function PresentationView({ deckId }: { deckId: string }) {
       {version.changeSummary && version.version > 1 ? <p className="text-sm text-muted-foreground">Change in v{version.version}: {version.changeSummary}</p> : null}
 
       <Card className="overflow-hidden">
+        {running && live ? (
+          <div className="flex items-center gap-2 border-b bg-sky-50 px-4 py-2 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span className="font-medium">Revising live</span>
+            <span className="text-sky-700/80 dark:text-sky-400/80">
+              · {STAGE_LABELS[live.status] ?? live.status}
+              {progress?.render ? ` · showing render round ${progress.render.round + 1}` : progress?.busy.size ? ` · rewriting ${progress.busy.size} slide${progress.busy.size === 1 ? "" : "s"}` : ""}
+            </span>
+          </div>
+        ) : null}
         {current ? (
           <div className="group relative bg-black">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/artifacts/${current.id}`} alt={`Slide ${index + 1}: ${titleOf(index)}`} className="aspect-video w-full object-contain" />
+            <img key={current.key} src={current.src} alt={`Slide ${index + 1}: ${current.title}`} className={cx("aspect-video w-full object-contain transition-opacity", busy(current.slideId) && "opacity-50")} />
+            {busy(current.slideId) ? (
+              <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-xs text-white backdrop-blur">
+                <Loader2 className="size-3.5 animate-spin" /> Rewriting this slide…
+              </span>
+            ) : null}
             <SlideArrow side="left" disabled={index === 0} onClick={() => setSlide(index - 1)} />
-            <SlideArrow side="right" disabled={index >= previews.length - 1} onClick={() => setSlide(index + 1)} />
+            <SlideArrow side="right" disabled={index >= frames.length - 1} onClick={() => setSlide(index + 1)} />
           </div>
         ) : (
           <p className="p-6 text-sm text-muted-foreground">No previews were rendered.</p>
         )}
         <div className="flex items-center justify-between gap-4 border-t px-4 py-2.5 text-sm">
-          <span className="min-w-0 truncate font-medium">{titleOf(index)}</span>
+          <span className="min-w-0 truncate font-medium">{current?.title}</span>
           <span className="shrink-0 font-mono text-xs text-muted-foreground">
-            {previews.length ? index + 1 : 0} / {previews.length}
+            {frames.length ? index + 1 : 0} / {frames.length}
           </span>
         </div>
         <div className="flex gap-2 overflow-x-auto border-t p-3">
-          {previews.map((p, i) => (
+          {frames.map((f, i) => (
             <button
-              key={p.id}
+              key={f.key}
               onClick={() => setSlide(i)}
-              className={cx("shrink-0 overflow-hidden rounded-md border-2 transition-opacity", i === index ? "border-primary" : "border-transparent opacity-60 hover:opacity-100")}
-              aria-label={`Show slide ${i + 1}`}
+              className={cx(
+                "relative shrink-0 overflow-hidden rounded-md border-2 transition-opacity",
+                i === index ? "border-primary" : "border-transparent opacity-60 hover:opacity-100",
+                busy(f.slideId) && "border-sky-500 opacity-100",
+              )}
+              aria-label={`Show slide ${i + 1}${busy(f.slideId) ? " (being rewritten)" : ""}`}
               aria-current={i === index}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/artifacts/${p.id}`} alt="" className="h-[4.5rem] w-32 object-cover" />
+              <img src={f.src} alt="" className={cx("h-[4.5rem] w-32 object-cover", busy(f.slideId) && "opacity-40")} />
+              {busy(f.slideId) ? <Loader2 className="absolute inset-0 m-auto size-5 animate-spin text-white" /> : null}
             </button>
           ))}
         </div>
       </Card>
 
-      <RevisionBox deckId={deck.id} busyJob={deck.latestJob && !["completed", "failed"].includes(deck.latestJob.status) ? deck.latestJob.id : null} />
+      {live && (running || live.status === "failed") ? (
+        <RevisionProgress job={live} now={now} onDismiss={() => setLiveJobId(null)} />
+      ) : (
+        <RevisionBox deckId={deck.id} onStarted={(jobId) => setLiveJobId(jobId)} />
+      )}
 
       <div className="space-y-4">
         <div className="w-full sm:w-96">
@@ -322,8 +386,7 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "wa
   );
 }
 
-function RevisionBox({ deckId, busyJob }: { deckId: string; busyJob: string | null }) {
-  const router = useRouter();
+function RevisionBox({ deckId, onStarted }: { deckId: string; onStarted: (jobId: string) => void }) {
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -334,7 +397,7 @@ function RevisionBox({ deckId, busyJob }: { deckId: string; busyJob: string | nu
     setError(null);
     try {
       const { jobId } = await api<{ jobId: string }>(`/api/presentations/${deckId}/revise`, { method: "POST", body: JSON.stringify({ instruction: text }) });
-      router.push(`/jobs/${jobId}`);
+      onStarted(jobId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not start the revision.");
       setSubmitting(false);
@@ -344,36 +407,70 @@ function RevisionBox({ deckId, busyJob }: { deckId: string; busyJob: string | nu
   return (
     <Card>
       <CardHeader title="Revise this presentation" description="Describe the change. Slides you don't mention stay as they are, and the result becomes a new version." />
-      {busyJob ? (
-        <p className="p-4 text-sm">
-          A revision is in progress.{" "}
-          <a className="font-medium underline underline-offset-4" href={`/jobs/${busyJob}`}>
-            Follow it
-          </a>
-        </p>
-      ) : (
-        <form onSubmit={submit} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
-          <Textarea
-            aria-label="Revision request"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim().length >= 3) e.currentTarget.form?.requestSubmit();
-            }}
-            rows={2}
-            placeholder="e.g. Make the architecture slide easier to understand and add a slide on the database design."
-            className="min-h-[3.5rem] flex-1"
-          />
-          <Button type="submit" disabled={submitting || text.trim().length < 3} className="sm:w-44">
-            {submitting ? <Spinner /> : null}
-            Apply revision
-          </Button>
-        </form>
-      )}
+      <form onSubmit={submit} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+        <Textarea
+          aria-label="Revision request"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim().length >= 3) e.currentTarget.form?.requestSubmit();
+          }}
+          rows={2}
+          placeholder="e.g. Make the architecture slide easier to understand and add a slide on the database design."
+          className="min-h-[3.5rem] flex-1"
+        />
+        <Button type="submit" disabled={submitting || text.trim().length < 3} className="sm:w-44">
+          {submitting ? <Spinner /> : null}
+          Apply revision
+        </Button>
+      </form>
       {error ? <p role="alert" className="px-4 pb-4 text-xs text-destructive">{error}</p> : null}
     </Card>
   );
 }
+
+/** The running (or failed) revision under the slides: its request, status and every recorded step. */
+function RevisionProgress({ job, now, onDismiss }: { job: JobView; now: number; onDismiss: () => void }) {
+  const running = !TERMINAL.has(job.status);
+  const started = job.startedAt ?? job.createdAt;
+  const elapsed = Math.max(0, Math.round(((job.completedAt ? new Date(job.completedAt).getTime() : now) - new Date(started).getTime()) / 1000));
+  return (
+    <Card>
+      <CardHeader
+        title={running ? "Revising this presentation" : "The revision failed"}
+        description={<span className="text-foreground/80">{job.prompt}</span>}
+        action={
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="font-mono text-xs text-muted-foreground">{elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s`}</span>
+            <JobStatusBadge status={job.status} />
+          </div>
+        }
+      />
+      {job.status === "failed" ? (
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b bg-destructive/5 px-5 py-3 text-sm">
+          <p className="text-destructive">{job.errorMessage ?? "The revision stopped."}</p>
+          <Button size="sm" variant="outline" onClick={onDismiss}>
+            Try another revision
+          </Button>
+        </div>
+      ) : null}
+      <div className="px-5 py-4">
+        <ActivityTimeline events={job.events} running={running} currentStage={STAGE_LABELS[job.status]} />
+      </div>
+    </Card>
+  );
+}
+
+interface Frame {
+  key: string;
+  src: string;
+  slideId: string;
+  title: string;
+}
+
+// Slide titles may carry *accent* marks for the rendered page; show them as plain text here.
+const plain = (title: string) => title.replace(/\*+([^*]+)\*+/g, "$1");
+
 
 function EvidencePanel({ claims, repoUrl, commit }: { claims: DeckView["claims"]; repoUrl: string; commit: string }) {
   const [filter, setFilter] = useState<"all" | "verified" | "inferred" | "unverified">("all");

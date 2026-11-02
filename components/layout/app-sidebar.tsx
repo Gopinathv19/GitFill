@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Activity, BookOpen, ChevronRight, FolderGit2, LayoutGrid, LogOut, PanelLeftClose, Plus, Presentation, Settings } from "lucide-react";
-import { Logo } from "@/components/shared/logo";
+import { Activity, BookOpen, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, LogOut, PanelLeftClose, Plus, Presentation, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -29,8 +28,9 @@ const NAV = [
 const SESSIONS_PER_GROUP = 6;
 
 /**
- * Single navigation column: new session, app sections, then every workspace as a folder of its
- * chat sessions (most recently active first), and the account at the bottom.
+ * Single navigation column: the account on top, new session and app sections, then every
+ * workspace as a folder of its chat sessions (most recently active first), and the product
+ * area (Main) with settings at the bottom.
  */
 export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub: boolean; onCollapse?: () => void }) {
   const pathname = usePathname();
@@ -54,14 +54,12 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar">
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <Link href="/new" aria-label="GitFill home: new session" className="min-w-0 flex-1">
-          <Logo className="[&>span:first-child]:size-7 [&>span:first-child]:text-xs" />
-        </Link>
+      <div className="flex h-12 shrink-0 items-center gap-1 px-2">
+        <AccountMenu user={user} stub={stub} />
         {onCollapse && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={onCollapse} aria-label="Hide sidebar">
+              <Button variant="ghost" size="icon" className="size-8 shrink-0 text-muted-foreground" onClick={onCollapse} aria-label="Hide sidebar">
                 <PanelLeftClose className="size-4" />
               </Button>
             </TooltipTrigger>
@@ -110,44 +108,69 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
         ))}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-t px-2 py-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent">
-              <Avatar className="size-6">
-                {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.login} referrerPolicy="no-referrer" />}
-                <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-violet-600 text-[10px] text-white">{getInitials(user.name ?? user.login)}</AvatarFallback>
-              </Avatar>
-              <span className="truncate text-sm font-medium">{user.name ?? user.login}</span>
-              {stub && <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-1.5 text-[10px] font-medium text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">demo</span>}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="top" className="w-56">
-            <DropdownMenuLabel className="font-normal">
-              <p className="text-sm font-semibold">{user.name ?? user.login}</p>
-              <p className="truncate text-xs text-muted-foreground">@{user.login}</p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/settings">
-                <Settings />
-                Settings
+      <div className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
+        {/* The product area. GitFill starts with Main; more areas join it here later. */}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gradient-to-br from-emerald-600 to-teal-400 text-white shadow-sm" aria-hidden>
+            <GitBranch className="size-3.5" />
+          </span>
+          <span className="truncate text-sm font-semibold">Main</span>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button asChild variant="ghost" size="icon" className="size-8 text-muted-foreground">
+              <Link href="/settings" aria-label="Settings">
+                <Settings className="size-4" />
               </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <form action="/api/auth/logout" method="post">
-              <DropdownMenuItem asChild className="text-destructive focus:text-destructive">
-                <button type="submit" className="w-full">
-                  <LogOut />
-                  Sign out
-                </button>
-              </DropdownMenuItem>
-            </form>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <ThemeToggle />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">Settings</TooltipContent>
+        </Tooltip>
+        <ThemeToggle className="size-8 text-muted-foreground" />
       </div>
     </div>
+  );
+}
+
+/** The signed-in account, top of the sidebar: name and avatar, with settings and sign-out. */
+function AccountMenu({ user, stub }: { user: SessionUser; stub: boolean }) {
+  const name = user.name ?? user.login;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent">
+          <Avatar className="size-6 rounded-md">
+            {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.login} referrerPolicy="no-referrer" className="rounded-md" />}
+            <AvatarFallback className="rounded-md border bg-background text-[10px] font-semibold text-foreground">{getInitials(name)}</AvatarFallback>
+          </Avatar>
+          <span className="truncate text-sm font-semibold">{name}</span>
+          {stub && <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-1.5 text-[10px] font-medium text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">demo</span>}
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="bottom" className="w-56">
+        <DropdownMenuLabel className="font-normal">
+          <p className="text-sm font-semibold">{name}</p>
+          <p className="truncate text-xs text-muted-foreground">@{user.login}</p>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/settings">
+            <Settings />
+            Settings
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <form action="/api/auth/logout" method="post">
+          <DropdownMenuItem asChild className="text-destructive focus:text-destructive">
+            <button type="submit" className="w-full">
+              <LogOut />
+              Sign out
+            </button>
+          </DropdownMenuItem>
+        </form>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

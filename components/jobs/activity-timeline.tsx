@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
+import { DataView, hasData } from "@/components/shared/data-view";
 import { cn } from "@/lib/utils";
 
 export interface JobEvent {
@@ -195,12 +196,11 @@ function Dot({ status, muted = false }: { status: JobEvent["status"] | "mixed"; 
 }
 
 function IoBox({ label, value, tone }: { label: string; value: unknown; tone?: "error" }) {
-  if (value === undefined || value === null || value === "") return null;
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  if (!hasData(value)) return null;
   return (
-    <div className="grid grid-cols-[3rem_1fr] border-t first:border-t-0">
-      <span className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{label}</span>
-      <pre className={cn("max-h-56 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11.5px] leading-relaxed", tone === "error" ? "text-destructive" : "text-foreground/85")}>{text}</pre>
+    <div className="grid grid-cols-[4.5rem_1fr] gap-2 border-t px-3 py-2.5 first:border-t-0">
+      <span className="pt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      {tone === "error" ? <p className="text-[12.5px] text-destructive">{String(value)}</p> : <DataView value={value} />}
     </div>
   );
 }
@@ -208,8 +208,8 @@ function IoBox({ label, value, tone }: { label: string; value: unknown; tone?: "
 function Detail({ event }: { event: JobEvent }) {
   return (
     <div className="mt-2 overflow-hidden rounded-lg border bg-muted/40">
-      <IoBox label="IN" value={event.input} />
-      {event.status === "failed" ? <IoBox label="ERR" value={event.error} tone="error" /> : <IoBox label="OUT" value={event.output} />}
+      <IoBox label="Input" value={event.input} />
+      {event.status === "failed" ? <IoBox label="Error" value={event.error} tone="error" /> : <IoBox label="Output" value={event.output} />}
       {event.model ? <p className="border-t px-3 py-1.5 font-mono text-[11px] text-muted-foreground">{event.model}</p> : null}
     </div>
   );

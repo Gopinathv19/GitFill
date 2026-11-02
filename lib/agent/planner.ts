@@ -101,6 +101,7 @@ export async function planDeck(opts: {
     `Audience: ${request.audience}`,
     `Slide count: exactly ${request.slideCount}`,
     request.instructions ? `Additional instructions from the user: ${request.instructions}` : "",
+    request.brief ? `Reader brief agreed with the user (it outranks the default story order; follow its framing, emphasis, names to feature and things to skip):\n${request.brief}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -253,6 +254,7 @@ export const revisionPlanSchema = z.object({
         z.object({ op: z.literal("delete"), id: z.string() }),
         z.object({ op: z.literal("move"), id: z.string(), after: anchor }),
         z.object({ op: z.literal("set_theme"), theme: z.enum(THEMES) }),
+        z.object({ op: z.enum(["hide_commit", "show_commit"]) }),
       ]),
     )
     .min(1)
@@ -268,6 +270,7 @@ export type RevisionPlan = z.infer<typeof revisionPlanSchema>;
 export function applyRevision(spec: DeckSpec, plan: RevisionPlan): { spec: DeckSpec; changedIds: string[]; problems: string[] } {
   let slides = [...spec.slides];
   let theme = spec.theme;
+  let showCommit = spec.showCommit;
   const changed = new Set<string>();
   const problems: string[] = [];
   const indexAfter = (after: string) => (after === "start" ? 0 : slides.findIndex((s) => s.id === after) + 1);
@@ -316,12 +319,50 @@ export function applyRevision(spec: DeckSpec, plan: RevisionPlan): { spec: DeckS
       case "set_theme":
         theme = op.theme;
         break;
+      case "hide_commit":
+      case "show_commit":
+        showCommit = op.op === "show_commit";
+        break;
     }
   }
-  return { spec: { ...spec, theme, slides }, changedIds: [...changed], problems };
+  return { spec: { ...spec, theme, showCommit, slides }, changedIds: [...changed], problems };
 }
 
-/** Muse Wonder interprets a natural-language revision as targeted spec operations. */
+/**
+ * The revision plan as the model writes it: operations name slides and describe changes but carry
+ * no slide bodies. A full slide inside operations[] nests past the model API's 10-level schema
+ * limit, so changed slides are composed one by one afterwards, like pages in planDeck.
+ */
+/** Fields each revision operation needs; the model fills one flat object per operation. */
+const REQUIRED_FIELDS = { replace: ["id", "change"], insert: ["after", "layout", "title", "change"], delete: ["id"], move: ["id", "after"], set_theme: ["theme"], hide_commit: [], show_commit: [] } as const;
+
+// One flat object per operation with every key present (null when unused): Muse Wonder neither
+// follows anyOf branches nor optional keys reliably, but fills required keys as written.
+const revisionStepSchema = z
+  .object({
+    op: z.enum(["replace", "insert", "delete", "move", "set_theme", "hide_commit", "show_commit"]),
+    id: z.string().nullable().describe("replace, delete, move: the slide id. Otherwise null."),
+    after: z.string().nullable().describe('insert, move: the slide id to place it after, or "start". Otherwise null.'),
+    layout: z.enum(["cover", "page"]).nullable().describe("insert: the new slide's layout. Otherwise null."),
+    section: z.string().max(36).nullable().describe("insert: the section name for a page. Otherwise null."),
+    title: z.string().max(80).nullable().describe("insert: working title. replace: the new title when the request renames the slide, else null. Otherwise null."),
+    change: z.string().max(800).nullable().describe("replace: exactly what to change and what to keep. insert: what the new slide must show, with the analysis items and claim refs to use. Otherwise null."),
+    theme: z.enum(THEMES).nullable().describe("set_theme: the new theme. Otherwise null."),
+  })
+  .superRefine((step, ctx) => {
+    for (const field of REQUIRED_FIELDS[step.op]) {
+      if (!step[field]) ctx.addIssue({ code: "custom", path: [field], message: `"${field}" is required for op "${step.op}".` });
+    }
+  });
+
+export const revisionStepsSchema = z.object({
+  summary: z.string().min(1).max(400),
+  operations: z.array(revisionStepSchema).max(20).describe("Empty when nothing in the deck can carry out the request."),
+});
+
+type RevisionSteps = z.infer<typeof revisionStepsSchema>;
+
+/** Muse Wonder interprets a natural-language revision as targeted operations; changed slides are then composed in parallel. */
 export async function planRevision(opts: {
   client: MuseClient;
   spec: DeckSpec;
@@ -331,27 +372,96 @@ export async function planRevision(opts: {
   evidence?: string;
   recorder: RunRecorder;
 }): Promise<RevisionPlan> {
+  const evidence = opts.evidence ?? `Recorded claims (cite these refs for new content):\n${renderClaimsForPrompt(opts.claims)}`;
   const event = await opts.recorder.start("step", "plan_revision", { instruction: opts.instruction }, modelFor("planner"));
+  let steps: RevisionSteps;
   try {
     const { data, usage } = await opts.client.structured({
       model: modelFor("planner"),
       purpose: "plan_revision",
-      schema: revisionPlanSchema,
-      schemaName: "RevisionPlan",
+      schema: revisionStepsSchema,
+      schemaName: "RevisionSteps",
+      correctionAttempts: 2,
       maxTokens: 16_000,
       messages: [
         { role: "system", content: REVISION_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Revision request: ${opts.instruction}\n\nCurrent deck specification:\n${JSON.stringify(opts.spec)}\n\n${opts.evidence ?? `Recorded claims (cite these refs for new content):\n${renderClaimsForPrompt(opts.claims)}`}`,
-        },
+        { role: "user", content: `Revision request: ${opts.instruction}\n\nCurrent deck specification:\n${JSON.stringify(opts.spec)}\n\n${evidence}` },
       ],
     });
     await opts.recorder.addUsage(usage.inputTokens, usage.outputTokens);
-    await event.succeed({ summary: data.summary, operations: data.operations.map((o) => o.op) });
-    return data;
+    // Targets let a live view mark the slides being rewritten before anything renders.
+    await event.succeed({ summary: data.summary, operations: data.operations.map((o) => o.op), targets: data.operations.flatMap((o) => (o.op === "replace" || o.op === "delete" || o.op === "move" ? [o.id!] : [])) });
+    steps = data;
   } catch (err) {
     await event.fail(err instanceof Error ? err.message : "revision planning failed");
     throw err;
+  }
+
+  const byId = new Map(opts.spec.slides.map((s) => [s.id, s]));
+  const used = new Set(byId.keys());
+  const operations = await Promise.all(
+    steps.operations.map(async (op): Promise<RevisionPlan["operations"][number] | null> => {
+      if (op.op === "replace") {
+        const current = byId.get(op.id!);
+        // Unknown ids are reported by applyRevision; nothing to compose.
+        if (!current) return { op: "replace", slide: fallbackSlide({ id: op.id!, layout: "page", section: "Overview", title: op.id!, intent: op.change!, blocks: [] }) };
+        if (current.layout === "contents") return null;
+        const slide = await reviseSlide({ ...opts, evidence, id: op.id!, layout: current.layout, task: `Current slide:\n${JSON.stringify(current)}\n\nChange to make: ${op.change}\nReturn the current slide with only this change applied; keep the title, blocks and wording the change does not mention exactly as they are.` });
+        // A requested rename is applied exactly; the composer tends to keep the current title.
+        const next = slide ?? current;
+        return { op: "replace", slide: op.title ? { ...next, title: op.title } : next };
+      }
+      if (op.op === "insert") {
+        let n = opts.spec.slides.length + 1;
+        while (used.has(`s${n}`)) n++;
+        const id = `s${n}`;
+        used.add(id);
+        const item = { id, layout: op.layout!, section: op.section || "Overview", title: op.title!, intent: op.change!, blocks: [] };
+        const slide = await reviseSlide({ ...opts, evidence, id, layout: item.layout, task: `New slide${item.layout === "page" ? ` in section "${item.section}"` : ""}. Working title: ${item.title}\nBrief: ${item.intent}` });
+        return { op: "insert", after: op.after!, slide: slide ?? fallbackSlide(item) };
+      }
+      if (op.op === "delete") return { op: "delete", id: op.id! };
+      if (op.op === "move") return { op: "move", id: op.id!, after: op.after! };
+      if (op.op === "set_theme") return { op: "set_theme", theme: op.theme! };
+      return { op: op.op };
+    }),
+  );
+  return { summary: steps.summary, operations: operations.filter((o) => o !== null) };
+}
+
+async function reviseSlide(opts: {
+  client: MuseClient;
+  recorder: RunRecorder;
+  spec: DeckSpec;
+  evidence: string;
+  id: string;
+  layout: "cover" | "page";
+  task: string;
+}): Promise<Slide | null> {
+  const schema =
+    opts.layout === "cover"
+      ? coverSlide.refine((s) => s.id === opts.id, { message: `id must be "${opts.id}"`, path: ["id"] })
+      : pageSlide.refine((s) => s.id === opts.id, { message: `id must be "${opts.id}"`, path: ["id"] });
+  const map = opts.spec.slides.map((s) => `${s.id} [${s.layout}${s.layout === "page" ? ` · ${s.section}` : ""}] ${s.title}`).join("\n");
+  const event = await opts.recorder.start("step", "compose_slide", { slide: opts.id, layout: opts.layout }, modelFor("composer"));
+  try {
+    const { data, usage } = await opts.client.structured({
+      model: modelFor("composer"),
+      purpose: `revise_slide:${opts.id}`,
+      schema,
+      schemaName: opts.layout === "cover" ? "CoverSlide" : "PageSlide",
+      correctionAttempts: 2,
+      maxTokens: 16_000,
+      messages: [
+        { role: "system", content: COMPOSE_SYSTEM_PROMPT },
+        { role: "user", content: `Deck pages (for context; compose only ${opts.id}, and only the change below; other operations of this revision are handled separately):\n${map}\n\nCompose slide ${opts.id} (layout "${opts.layout}").\n${opts.task}\n\n${opts.evidence}` },
+      ],
+    });
+    await opts.recorder.addUsage(usage.inputTokens, usage.outputTokens);
+    await event.succeed({ title: (data as Slide).title });
+    return data as Slide;
+  } catch (err) {
+    await event.fail(err instanceof Error ? err.message : "compose failed");
+    return null;
   }
 }

@@ -4,7 +4,7 @@ import { env } from "@/lib/config/env";
 import { getSnapshot } from "@/lib/connectors/cache";
 import type { GitHubClient } from "@/lib/connectors/github/client";
 import { canonicalRepoUrl, parseGitHubUrl } from "@/lib/connectors/github/url";
-import { getRepoStore, RepoStoreError } from "@/lib/repo-store";
+import { getRepoStore, RepoStoreError, SnapshotSource, type CodeSource } from "@/lib/repo-store";
 import { explainCode, type ExplanationResult } from "./explain";
 import { explainWithSearch } from "./explain-search";
 import type { AskRequest } from "./schemas";
@@ -37,10 +37,13 @@ export async function answerGitHubQuestion(opts: { url: string; branch?: string;
   return { source: { displayName: snapshot.displayName, version: snapshot.version, branch: snapshot.branch }, result };
 }
 
-async function answerWithSearch(opts: { url: string; branch?: string; client: GitHubClient; request: AskRequest; recorder: MemoryRecorder }, muse: MuseClient) {
+/**
+ * Opens a GitHub repository at its branch head as a CodeSource from the repo store. Resolving the
+ * branch with the caller's own client is the access check: a repository the caller cannot read
+ * fails here, before anything is served from the shared store.
+ */
+export async function openGitHubSource(opts: { url: string; branch?: string; client: GitHubClient; recorder: MemoryRecorder }) {
   const ref = parseGitHubUrl(opts.url);
-  // Resolving the branch with the caller's own client is the access check: a repository the caller
-  // cannot read fails here, before anything is served from the shared store.
   const headStep = await opts.recorder.start("step", "repo_head", { repository: `${ref.owner}/${ref.repo}` });
   const [repo, commit] = await Promise.all([opts.client.getRepo(ref.owner, ref.repo), opts.client.getCommit(ref.owner, ref.repo, opts.branch ?? ref.branch ?? "HEAD")]);
   const branch = opts.branch ?? ref.branch ?? repo.defaultBranch;
@@ -56,9 +59,23 @@ async function answerWithSearch(opts: { url: string; branch?: string; client: Gi
     throw err;
   }
   await openStep.succeed({ origin: opened.origin, ms: opened.ms, store: store.kind });
+  return { source: opened.source, repo, commit, branch };
+}
 
+/** A CodeSource for the caller's repository: the repo store when it can serve it, else the cached snapshot. */
+export async function openRepositorySource(opts: { url: string; branch?: string; client: GitHubClient; recorder: MemoryRecorder }): Promise<CodeSource> {
+  try {
+    return (await openGitHubSource(opts)).source;
+  } catch (err) {
+    if (!(err instanceof RepoStoreError)) throw err;
+    return new SnapshotSource(await getSnapshot(opts.url, opts.branch, { client: opts.client, recorder: opts.recorder }));
+  }
+}
+
+async function answerWithSearch(opts: { url: string; branch?: string; client: GitHubClient; request: AskRequest; recorder: MemoryRecorder }, muse: MuseClient) {
+  const { source, repo, commit, branch } = await openGitHubSource(opts);
   const [owner, name] = repo.fullName.split("/");
   const meta = { connector: "github", sourceUrl: canonicalRepoUrl({ owner: owner!, repo: name! }), version: commit.sha, displayName: repo.fullName, branch, description: repo.description };
-  const result = await explainWithSearch({ client: muse, source: opened.source, meta, request: opts.request, recorder: opts.recorder });
+  const result = await explainWithSearch({ client: muse, source, meta, request: opts.request, recorder: opts.recorder });
   return { source: { displayName: repo.fullName, version: commit.sha, branch }, result };
 }

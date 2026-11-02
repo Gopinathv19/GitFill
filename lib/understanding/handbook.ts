@@ -99,6 +99,7 @@ async function explore(client: MuseClient, context: RepositoryContext, request: 
     `Handbook to prepare: ${AUDIENCE_LABEL[request.audience]}.`,
     scopeLine,
     request.instructions ? `User instructions: ${request.instructions}` : "",
+    request.brief ? `Reader brief agreed with the user (decides what to trace first and most deeply):\n${request.brief}` : "",
     "",
     described.text,
   ]
@@ -137,6 +138,7 @@ function composerInput(context: RepositoryContext, request: HandbookRequest, not
     `Audience: ${AUDIENCE_LABEL[request.audience]} (enum value: ${request.audience}).`,
     `Scope: ${request.scope}${request.focus ? ` — ${request.focus}` : ""}.`,
     request.instructions ? `User instructions: ${request.instructions}` : "",
+    request.brief ? `Reader brief agreed with the user (it outranks the audience preset: follow its framing, emphasis, names to feature and things to skip):\n${request.brief}` : "",
     `Repository: ${snapshot.displayName}, branch ${snapshot.branch}, commit ${snapshot.version.slice(0, 7)}.${snapshot.description ? ` GitHub description: ${snapshot.description}` : ""}`,
     `\nComputed facts (safe to state; cite no refs for them):`,
     `Directories:\n${dirs}`,

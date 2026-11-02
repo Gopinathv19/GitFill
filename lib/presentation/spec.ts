@@ -329,6 +329,8 @@ export const deckSpecSchema = z.object({
   audience: text(120),
   purpose: text(240),
   theme: z.enum(THEMES).default("midnight"),
+  /** Whether the footer and cover show the commit SHA the deck was generated from. */
+  showCommit: z.boolean().default(true),
   slides: z.array(slideSchema).min(2).max(24),
 });
 

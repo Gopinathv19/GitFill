@@ -78,7 +78,8 @@ export async function buildValidatedDeck(opts: BuildOptions): Promise<BuildResul
     let render: RenderResult;
     try {
       render = await renderPages(html, path.join(opts.workDir, `round-${round}`));
-      await renderEvent.succeed({ pages: render.slides.length });
+      // Slide ids in page order let a live view map this round's images to slides.
+      await renderEvent.succeed({ round, pages: render.slides.length, slideIds: render.slides.map((s) => s.slideId) });
     } catch (err) {
       await renderEvent.fail(err instanceof Error ? err.message : "render failed");
       throw err;

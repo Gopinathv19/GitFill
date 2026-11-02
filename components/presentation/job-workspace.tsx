@@ -2,36 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import { ArrowLeft, Check, Loader2 } from "lucide-react";
-import { ActivityTimeline, type JobEvent } from "@/components/jobs/activity-timeline";
+import { ActivityTimeline } from "@/components/jobs/activity-timeline";
 import { PageHeader } from "@/components/shared/page-header";
 import { JOB_KIND_LABELS, JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { api } from "@/lib/client/api";
+import { useJob, type JobView } from "@/lib/client/use-job";
 import { cn } from "@/lib/utils";
 
-interface JobView {
-  id: string;
-  kind: "generate" | "revise" | "handbook" | "compare" | "reuse";
-  status: string;
-  repositoryUrl: string;
-  branch: string | null;
-  commitSha: string | null;
-  prompt: string;
-  errorMessage: string | null;
-  deckId: string | null;
-  documentId: string | null;
-  workspaceId: string;
-  usage: { inputTokens: number; outputTokens: number };
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  events: JobEvent[];
-}
-
-const PIPELINES: Record<JobView["kind"], string[]> = {
+export const PIPELINES: Record<JobView["kind"], string[]> = {
   generate: ["analyzing_repository", "planning_presentation", "generating_presentation", "rendering_slides", "validating_presentation", "generating_documents", "completed"],
   revise: ["analyzing_repository", "planning_presentation", "generating_presentation", "rendering_slides", "validating_presentation", "generating_documents", "completed"],
   handbook: ["analyzing_repository", "composing_document", "completed"],
@@ -42,33 +22,7 @@ const PIPELINES: Record<JobView["kind"], string[]> = {
 /** Live view of one job. Every row comes from recorded agent_events; nothing is simulated. */
 export function JobWorkspace({ jobId }: { jobId: string }) {
   const router = useRouter();
-  const [job, setJob] = useState<JobView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    let alive = true;
-    const poll = async () => {
-      try {
-        const data = await api<JobView>(`/api/jobs/${jobId}`);
-        if (!alive) return;
-        setJob(data);
-        setNow(Date.now());
-        setError(null);
-        if (!TERMINAL.has(data.status)) timer = setTimeout(poll, 2000);
-      } catch (e) {
-        if (!alive) return;
-        setError((e as Error).message);
-        timer = setTimeout(poll, 4000);
-      }
-    };
-    void poll();
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [jobId]);
+  const { job, error, now } = useJob(jobId);
 
   if (!job) return <p className="text-sm text-muted-foreground">{error ?? "Loading job…"}</p>;
 

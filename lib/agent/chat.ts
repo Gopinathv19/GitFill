@@ -6,9 +6,12 @@ import { env } from "@/lib/config/env";
 import type { Database } from "@/lib/db";
 import { THEMES } from "@/lib/presentation/spec";
 import { HANDBOOK_AUDIENCES, REUSE_KINDS } from "@/lib/understanding/schemas";
-import { ActionError, askRepository, revisePresentation, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
+import { ActionError, askRepository, openWorkspaceRepository, revisePresentation, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
 import { getWorkspace, listMessages } from "@/lib/workspaces/service";
+import { askUserSchema, formatQuestions, type AskUser } from "@/lib/client/questions";
+import type { CodeSource } from "@/lib/repo-store";
 import { MemoryRecorder, type LiveEvent } from "./recorder";
+import { createSearchTools } from "./search-tools";
 import { logTimings } from "./timings";
 import { defineTool, runToolLoop } from "./tool-loop";
 
@@ -17,19 +20,45 @@ const CHAT_SYSTEM_PROMPT = `You are GitFill, an assistant inside a user's worksp
 The repositories, documents and presentations in this workspace are listed at the end of this message.
 
 You can act through tools:
+- list_files, grep, read_file and outline_file to look at a repository's code yourself (read-only, quick). Use them to scout before asking the user anything about a document.
+- ask_user to ask the user questions you wrote, each with options drawn from what you found in the code. It ends your turn; their answers arrive as the next message.
 - ask_codebase to answer a question about the code of one repository right now (how something works, what happens when…, why X calls Y, relationships, a diagram). The answer with sources is sent to the user directly and ends your turn, so call it without a reply.
-- start_handbook to generate a repository, module or feature handbook (technical handbook, hackathon pitch guide, new-developer guide, backend/frontend deep dive). Runs in the background.
+- start_handbook to generate a repository, module or feature handbook. Runs in the background.
 - start_commit_comparison to explain the architectural and structural changes between two commits, branches or tags. Runs in the background.
 - start_reuse_brief to write an implementation brief that transfers patterns from a reference repository into a target repository. Runs in the background.
-- start_presentation to generate a validated PowerPoint deck; revise_presentation to change one. Runs in the background.
+- start_presentation to generate a validated presentation deck; revise_presentation to change one. Runs in the background.
 Otherwise always finish with reply.
 
+Before a handbook or presentation: agree the intent
+A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So when the user asks for a handbook or presentation:
+1. Scout first. Look at the repository with list_files / grep / read_file (README, top-level directories, manifests, docs, entry points) until you know what is distinctive about it: its apps or modules, its audience-facing features, the external services or sponsors it highlights, its docs and screenshots.
+2. Work out which decisions about the document the request and the code leave open, and ask about those, and only those, with ask_user. Write the questions yourself for this repository; ground every option in something you found (name the real modules, features, services). 1-4 questions, one round. Add a short intro saying what you found.
+3. When the user answers (or says to just go ahead), write the brief and start the job. The brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
+Skip asking when the user has already given that intent, says "just go" / "use your judgment", or is asking for a revision. Never ask the same thing twice.
+
 Rules:
-- Only start background work when the user clearly asks for it. If the request is ambiguous (several repositories and none named, missing commit refs), ask a short question via reply instead.
+- Only start background work when the user clearly asks for it. If the request is ambiguous (several repositories and none named, missing commit refs), ask a short question instead.
 - Use the exact ids from the workspace listing. Never invent ids, repositories, commits or results.
 - Background jobs show progress below your message; do not claim they are finished.
 - For questions about the code, prefer ask_codebase over guessing. Never answer code questions from memory.
 - Keep replies short and plain.`;
+
+const SCOUT_TOOLS = ["list_files", "grep", "read_file", "outline_file"];
+
+/** Placeholder source used only to read the search tools' names, descriptions and input schemas. */
+const EMPTY_SOURCE: CodeSource = {
+  label: "",
+  version: "",
+  listFiles: async () => ({ paths: [], total: 0 }),
+  grep: async () => ({ hits: [], truncated: false }),
+  read: async () => null,
+};
+
+const BRIEF = z
+  .string()
+  .max(4000)
+  .optional()
+  .describe("The reader brief agreed with the user: reader and goal, framing and tone, must-cover topics (with paths), names to feature, things to skip, depth, what to show.");
 
 export interface ChatTurnResult {
   reply: string;
@@ -60,7 +89,43 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     }
   };
 
+  // Repositories opened for scouting in this turn, by id; opened lazily on first use.
+  const sources = new Map<string, Promise<CodeSource>>();
+  const sourceFor = (repositoryId: string) => {
+    let source = sources.get(repositoryId);
+    if (!source) {
+      source = openWorkspaceRepository(db, userId, workspaceId, repositoryId, recorder);
+      source.catch(() => sources.delete(repositoryId));
+      sources.set(repositoryId, source);
+    }
+    return source;
+  };
+  // The search agent's primitives, each taking the repository to look in.
+  const scoutTools = createSearchTools(EMPTY_SOURCE)
+    .filter((t) => SCOUT_TOOLS.includes(t.name))
+    .map((t) =>
+      defineTool({
+        name: t.name,
+        description: `${t.description} Read-only; for scouting a repository before asking the user about a document.`,
+        input: (t.input as z.ZodObject).extend({ repository_id: z.string().uuid() }),
+        run: async ({ repository_id, ...args }: { repository_id: string } & Record<string, unknown>) =>
+          act(async () => {
+            const source = await sourceFor(repository_id);
+            const tool = createSearchTools(source).find((x) => x.name === t.name)!;
+            return tool.run(tool.input.parse(args));
+          }, "Could not read the repository."),
+      }),
+    );
+
   const tools = [
+    ...scoutTools,
+    defineTool({
+      name: "ask_user",
+      description: "Ask the user 1-4 questions you wrote, each with 2-4 options grounded in what you found in the code. The user can also answer in their own words. Ends your turn.",
+      input: askUserSchema,
+      terminal: true,
+      run: async () => ({ shown: true }),
+    }),
     defineTool({
       name: "ask_codebase",
       description: "Answer a question about one repository's code now, with sources and an optional diagram. The answer goes to the user directly and ends the turn.",
@@ -87,10 +152,11 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         scope: z.enum(["repository", "module", "feature"]).default("repository"),
         focus: z.string().max(400).optional().describe("Directory path for module scope, or a feature description."),
         instructions: z.string().max(2000).optional(),
+        brief: BRIEF,
       }),
       run: async (i) =>
         act(async () => {
-          const { job, repo } = await startHandbook(db, userId, workspaceId, i.repository_id, { audience: i.audience, scope: i.scope, focus: i.focus ?? "", instructions: i.instructions ?? "" });
+          const { job, repo } = await startHandbook(db, userId, workspaceId, i.repository_id, { audience: i.audience, scope: i.scope, focus: i.focus ?? "", instructions: i.instructions ?? "", brief: i.brief ?? "" });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not start the handbook."),
@@ -132,10 +198,11 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         slide_count: z.number().int().min(4).max(16).optional(),
         theme: z.enum(THEMES).optional(),
         instructions: z.string().max(2000).optional(),
+        brief: BRIEF,
       }),
       run: async (i) =>
         act(async () => {
-          const { job, repo } = await startPresentation(db, userId, workspaceId, i.repository_id, { audience: i.audience, purpose: i.purpose, slideCount: i.slide_count, theme: i.theme, instructions: i.instructions });
+          const { job, repo } = await startPresentation(db, userId, workspaceId, i.repository_id, { audience: i.audience, purpose: i.purpose, slideCount: i.slide_count, theme: i.theme, instructions: i.instructions, brief: i.brief });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not start the presentation."),
@@ -160,7 +227,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     }),
   ];
 
-  const { result } = await runToolLoop<{ message?: string }>({
+  const { result } = await runToolLoop<{ message?: string } & Partial<AskUser>>({
     client: new MuseClient(recorder.modelObserver()),
     model: modelFor("analyst"),
     purpose: "workspace_chat",
@@ -168,16 +235,19 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     messages,
     tools,
     recorder,
-    // The chat agent only routes to tools; deep reasoning happens inside them.
-    reasoningEffort: "minimal",
-    maxTurns: 6,
-    maxToolCalls: 8,
-    maxTokens: 2000,
+    // Routing is light, but scouting a repository and writing grounded questions needs some reasoning;
+    // hidden reasoning counts against maxTokens, so leave room for it.
+    reasoningEffort: "low",
+    maxTurns: 10,
+    maxToolCalls: 24,
+    maxTokens: 8000,
+    trimHistory: { keepTurns: 3, maxChars: 120_000 },
   });
   logTimings(recorder, `chat turn (${jobIds.length} jobs started, ${attachments.length} answers attached)`);
   // Each answer numbers its evidence from C1; keep refs unique when several are attached.
   const answers = attachments.map((a, i) => (i ? suffixFootnotes(a, String(i + 1)) : a));
-  const reply = [result.message, answers.join("\n\n---\n\n")].filter(Boolean).join("\n\n");
+  const questions = result.questions ? formatQuestions({ intro: result.intro ?? "", questions: result.questions }) : "";
+  const reply = [result.message, questions, answers.join("\n\n---\n\n")].filter(Boolean).join("\n\n");
   return { reply, jobIds };
 }
 

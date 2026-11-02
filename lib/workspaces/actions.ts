@@ -8,7 +8,7 @@ import { saveDocument } from "@/lib/jobs/document-jobs";
 import { kickInlineWorker } from "@/lib/jobs/inline";
 import { ACTIVE_STATUSES, enqueueDocumentJob, enqueueGeneration, enqueueRevision } from "@/lib/jobs/queue";
 import { logTimings } from "@/lib/agent/timings";
-import { answerGitHubQuestion } from "@/lib/understanding/ask";
+import { answerGitHubQuestion, openRepositorySource } from "@/lib/understanding/ask";
 import { compareRequestSchema, handbookRequestSchema, type AskRequest, type CompareRequest, type HandbookRequest, type ReuseKind } from "@/lib/understanding/schemas";
 import { generateRequestSchema, type GenerateRequest } from "@/lib/validation/request";
 import { assertDeckAccess, getRepository } from "./service";
@@ -104,6 +104,13 @@ export async function listRepositoryCommits(db: Database, userId: string, worksp
   const ref = parseGitHubUrl(requireUrl(repo));
   const commits = await (await githubClientFor(db, userId)).listCommits(ref.owner, ref.repo, branch ?? repo.defaultBranch ?? undefined, 40);
   return { repository: `${ref.owner}/${ref.repo}`, branch: branch ?? repo.defaultBranch, commits };
+}
+
+/** Opens a workspace repository's code for read-only scouting (list, grep, read) by the chat agent. */
+export async function openWorkspaceRepository(db: Database, userId: string, workspaceId: string, repositoryId: string, recorder: MemoryRecorder) {
+  const repo = await getRepository(db, userId, workspaceId, repositoryId);
+  const url = requireUrl(repo);
+  return openRepositorySource({ url, branch: repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), recorder });
 }
 
 /**

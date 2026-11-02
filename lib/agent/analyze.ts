@@ -51,7 +51,7 @@ export async function analyzeRepository(opts: {
     .slice(0, 300)
     .map((i) => `- ${i.path} [${i.skipReason}]`)
     .join("\n");
-  const userContent = [`User's eventual goal (for emphasis only): ${opts.userRequest}`, `\nSkipped paths (not readable), for structural awareness:\n${skipped}`, "", described.text].join("\n");
+  const userContent = [`What the user wants from this analysis (decides what to investigate first and most deeply): ${opts.userRequest}`, `\nSkipped paths (not readable), for structural awareness:\n${skipped}`, "", described.text].join("\n");
 
   const { result, turns, toolCalls } = await runToolLoop<RepositoryAnalysis>({
     client: opts.client,

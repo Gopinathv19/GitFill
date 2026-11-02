@@ -71,6 +71,8 @@ export const handbookRequestSchema = z.object({
   focus: z.string().trim().max(400).default(""),
   audience: z.enum(HANDBOOK_AUDIENCES).default("technical_handbook"),
   instructions: z.string().trim().max(2000).default(""),
+  /** The reader brief agreed with the user in chat; it outranks the audience preset. */
+  brief: z.string().trim().max(4000).default(""),
   branch: z.string().trim().max(200).optional(),
 });
 export type HandbookRequest = z.infer<typeof handbookRequestSchema>;
