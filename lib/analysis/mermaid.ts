@@ -92,8 +92,23 @@ export function renderMermaid(spec: DiagramSpec): string {
   }
 }
 
+/**
+ * Models routinely emit non-breaking spaces, narrow spaces and zero-width characters inside labels.
+ * Mermaid's lexer does not treat them as whitespace, so they produce parse errors in the browser
+ * that are impossible to see in the source. Normalize them before anything else.
+ */
+export function cleanLabel(text: string): string {
+  return text
+    .replace(/[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .trim();
+}
+
 function esc(label: string): string {
-  return label.replace(/"/g, "#quot;").replace(/[<>]/g, (c) => (c === "<" ? "#lt;" : "#gt;")).replace(/\n/g, " ");
+  return cleanLabel(label).replace(/"/g, "#quot;").replace(/[<>]/g, (c) => (c === "<" ? "#lt;" : "#gt;")).replace(/\n/g, " ");
 }
 
 function shape(kind: DiagramNode["kind"], label: string): string {
@@ -153,19 +168,19 @@ function renderSequence(spec: DiagramSpec, nid: (x: string) => string): string {
 }
 
 function seqLabel(label: string): string {
-  return (label || "call").replace(/[;:\n]/g, " ").slice(0, 80);
+  return (cleanLabel(label) || "call").replace(/[;:\n]/g, " ").slice(0, 80);
 }
 
 function renderClass(spec: DiagramSpec, nid: (x: string) => string): string {
   const lines = ["classDiagram"];
   for (const n of spec.nodes) {
     lines.push(`  class ${nid(n.id)}["${esc(n.label)}"] {`);
-    for (const m of n.members ?? []) lines.push(`    ${m.replace(/[{}"]/g, "").slice(0, 70)}`);
+    for (const m of n.members ?? []) lines.push(`    ${cleanLabel(m).replace(/[{}"]/g, "").slice(0, 70)}`);
     lines.push("  }");
   }
   for (const e of spec.edges) {
     const rel = e.kind === "inherits" ? "<|--" : e.kind === "implements" ? "<|.." : e.kind === "composes" ? "*--" : e.inferred ? "..>" : "-->";
-    const label = e.label ? ` : ${e.label.replace(/[:"\n]/g, " ").slice(0, 40)}` : "";
+    const label = e.label ? ` : ${cleanLabel(e.label).replace(/[:"\n]/g, " ").slice(0, 40)}` : "";
     // Mermaid draws A <|-- B as "B inherits A": flip so from→to reads naturally.
     if (e.kind === "inherits" || e.kind === "implements") lines.push(`  ${nid(e.to)} ${rel} ${nid(e.from)}${label}`);
     else lines.push(`  ${nid(e.from)} ${rel} ${nid(e.to)}${label}`);
@@ -177,7 +192,7 @@ function renderEr(spec: DiagramSpec, nid: (x: string) => string): string {
   const lines = ["erDiagram"];
   for (const n of spec.nodes) {
     lines.push(`  ${nid(n.id)}["${esc(n.label)}"] {`);
-    for (const m of n.members ?? []) {
+    for (const m of (n.members ?? []).map(cleanLabel)) {
       // "id: uuid PK" → "uuid id PK"; fall back to "string name".
       const parts = /^([\w.]+)\s*:\s*([\w\[\]]+)(?:\s+(PK|FK|UK))?/.exec(m);
       if (parts) lines.push(`    ${parts[2]!.replace(/[\[\]]/g, "")} ${parts[1]}${parts[3] ? ` ${parts[3]}` : ""}`);
@@ -187,7 +202,7 @@ function renderEr(spec: DiagramSpec, nid: (x: string) => string): string {
   }
   for (const e of spec.edges) {
     const rel = e.kind === "one_to_one" ? "||--||" : e.kind === "many_to_many" ? "}o--o{" : "||--o{";
-    const label = (e.label ?? "has").replace(/["\n]/g, " ").slice(0, 40);
+    const label = (cleanLabel(e.label ?? "") || "has").replace(/["\n]/g, " ").slice(0, 40);
     lines.push(`  ${nid(e.from)} ${rel} ${nid(e.to)} : "${label}"`);
   }
   return lines.join("\n");

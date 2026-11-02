@@ -4,6 +4,7 @@ import { ConfigError } from "@/lib/config/env";
 import { GitHubError } from "@/lib/connectors/github/client";
 import { InvalidRepositoryUrlError } from "@/lib/connectors/github/url";
 import { UnauthorizedError } from "@/lib/auth/current";
+import { ArtifactMissingError } from "@/lib/storage";
 
 export class NotFoundError extends Error {
   override name = "NotFoundError";
@@ -32,6 +33,8 @@ export function handleError(err: unknown) {
   }
   if (err instanceof UnauthorizedError) return fail(401, "unauthorized", err.message);
   if (err instanceof NotFoundError) return fail(404, "not_found", err.message);
+  // The database row exists but its bytes do not (cleared storage directory, different machine).
+  if (err instanceof ArtifactMissingError) return fail(404, "artifact_missing", "This file is no longer stored on the server. Re-generate it to get a fresh copy.");
   if (err instanceof ConflictError) return fail(409, "conflict", err.message);
   if (err instanceof InvalidRepositoryUrlError) return fail(400, "invalid_repository_url", err.message);
   // GitHub errors carry user-safe messages (rate limits, not found, private repositories).

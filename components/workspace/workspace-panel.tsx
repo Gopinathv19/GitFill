@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { BookOpen, FileText, PanelRightClose, Plus } from "lucide-react";
+import { ArtifactImage } from "@/components/shared/artifact-image";
 import { JOB_KIND_LABELS, JobStatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { AddRepositoryDialog } from "@/components/workspace/add-repository-dialog";
@@ -49,8 +50,7 @@ export function WorkspacePanel({ data, reload, onActivity, onClose }: { data: Wo
           {data.presentations.slice(0, 5).map((p) => (
             <Link key={p.id} href={`/presentations/${p.id}`} className="flex items-center gap-3 rounded-lg border bg-card p-2.5 transition-colors hover:bg-accent">
               {p.previewArtifactId ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={`/api/artifacts/${p.previewArtifactId}`} alt="" className="h-9 w-16 shrink-0 rounded border object-cover" />
+                <ArtifactImage src={`/api/artifacts/${p.previewArtifactId}`} className="h-9 w-16 shrink-0 rounded border object-cover" fallbackClassName="h-9 w-16 shrink-0 rounded border" />
               ) : (
                 <div className="grid h-9 w-16 shrink-0 place-items-center rounded border bg-muted"><FileText className="size-4 text-muted-foreground" /></div>
               )}

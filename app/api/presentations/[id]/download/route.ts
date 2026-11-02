@@ -24,7 +24,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!version) return fail(404, "not_found", "Presentation version not found.");
     const artifact = (await db.select().from(artifacts).where(and(eq(artifacts.deckVersionId, version.id), eq(artifacts.artifactType, FORMATS[format]))))[0];
     if (!artifact) return fail(404, "not_found", `No ${format} file for this version.`);
-    return artifactResponse(artifact, true);
+    // `return await`: a missing file must be caught here so handleError maps it to 404.
+    return await artifactResponse(artifact, true);
   } catch (err) {
     return handleError(err);
   }

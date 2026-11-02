@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FileText } from "lucide-react";
+import { ArtifactImage } from "@/components/shared/artifact-image";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { timeAgo } from "@/lib/utils";
@@ -20,8 +21,7 @@ export function DeckGrid({ decks }: { decks: DeckCardData[] }) {
         <Link key={d.id} href={`/presentations/${d.id}`} className="group">
           <Card className="overflow-hidden transition-shadow group-hover:shadow-md">
             {d.previewArtifactId ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={`/api/artifacts/${d.previewArtifactId}`} alt="" className="aspect-video w-full border-b object-cover" />
+              <ArtifactImage src={`/api/artifacts/${d.previewArtifactId}`} className="aspect-video w-full border-b object-cover" fallbackClassName="aspect-video w-full border-b" />
             ) : (
               <div className="grid aspect-video place-items-center border-b bg-muted"><FileText className="size-8 text-muted-foreground" /></div>
             )}

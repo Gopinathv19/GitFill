@@ -11,7 +11,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     const { id } = await params;
     if (!isUuid(id)) return fail(400, "invalid_id", "Invalid artifact id.");
     const artifact = await assertArtifactAccess(getDb(), user.id, id);
-    return artifactResponse(artifact, new URL(req.url).searchParams.get("download") === "1", req.headers.get("range"));
+    // `return await` keeps a failed read inside this try: without it the rejection escapes
+    // handleError and Next.js reports a bare 500.
+    return await artifactResponse(artifact, new URL(req.url).searchParams.get("download") === "1", req.headers.get("range"));
   } catch (err) {
     return handleError(err);
   }

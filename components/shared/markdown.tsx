@@ -95,10 +95,11 @@ function MarkdownBlock({ children, evidence }: { children: string; evidence?: Ev
   );
 }
 
-function DiagramFallback({ chart, className }: { chart: string; className?: string }) {
+function DiagramFallback({ chart, className, reason }: { chart: string; className?: string; reason?: string | null }) {
   return (
     <div className={cn("rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs dark:bg-amber-950/30", className)}>
       <p className="font-medium text-amber-700 dark:text-amber-400">Diagram could not be rendered.</p>
+      {reason ? <p className="mt-1 text-amber-700/80 dark:text-amber-400/80">{reason}</p> : null}
       <pre className="mt-2 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
     </div>
   );
@@ -118,6 +119,50 @@ class DiagramBoundary extends Component<{ chart: string; children: ReactNode }, 
   }
 }
 
+/**
+ * Mermaid keeps its configuration and parser state in module-level globals, so two diagrams
+ * rendering at the same time corrupt each other (a page with several diagrams then shows
+ * "could not be rendered" at random). Every render goes through this one-at-a-time queue.
+ */
+let mermaidQueue: Promise<unknown> = Promise.resolve();
+
+function renderDiagram(id: string, chart: string, dark: boolean): Promise<string> {
+  const run = mermaidQueue.then(async () => {
+    const mermaid = (await import("mermaid")).default;
+    // suppressErrorRendering: on a parse error Mermaid otherwise draws its "Syntax error" bomb into a
+    // temporary element on <body> and leaves it there (common while an answer is still streaming).
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: dark ? "dark" : "neutral", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+    try {
+      // Validate first: parse() throws without touching the page.
+      await mermaid.parse(sanitizeChart(chart));
+      const { svg } = await mermaid.render(id, sanitizeChart(chart));
+      return svg;
+    } finally {
+      // Mermaid renders inside a temporary #d<id> wrapper on <body>; remove it if a failed render left it behind.
+      // (Never look up #<id> itself: the diagram shown on the page carries that id.)
+      const leftover = document.getElementById(`d${id}`);
+      if (leftover?.parentElement === document.body) leftover.remove();
+    }
+  });
+  // The queue must keep moving even when this diagram fails.
+  mermaidQueue = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * Characters models emit that Mermaid's lexer rejects: non-breaking and narrow spaces look like
+ * spaces but are not, and zero-width marks are invisible in the source shown on failure.
+ */
+function sanitizeChart(chart: string): string {
+  return chart
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]/g, " ")
+    .replace(/[\u200b-\u200d\u2060\ufeff]/g, "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .trim();
+}
+
 /** One Mermaid diagram. Re-renders when the theme changes; shows the source if it fails to parse. */
 export function Mermaid({ chart, className }: { chart: string; className?: string }) {
   const { resolvedTheme } = useTheme();
@@ -128,35 +173,25 @@ export function Mermaid({ chart, className }: { chart: string; className?: strin
 
   useEffect(() => {
     let alive = true;
-    const renderId = `gf-${id}-${resolvedTheme ?? "light"}`;
-    (async () => {
-      try {
-        const mermaid = (await import("mermaid")).default;
-        // suppressErrorRendering: on a parse error Mermaid otherwise draws its "Syntax error" bomb into a
-        // temporary element on <body> and leaves it there (common while an answer is still streaming).
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: resolvedTheme === "dark" ? "dark" : "neutral", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
-        // Validate first: parse() throws without touching the page.
-        await mermaid.parse(chart);
-        const { svg: out } = await mermaid.render(renderId, chart);
-        if (alive) {
-          setSvg(out);
-          setError(null);
-        }
-      } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : "Diagram could not be rendered.");
-      } finally {
-        // Mermaid renders inside a temporary #d<id> wrapper on <body>; remove it if a failed render left it behind.
-        // (Never look up #<id> itself: the diagram shown on the page carries that id.)
-        const leftover = document.getElementById(`d${renderId}`);
-        if (leftover?.parentElement === document.body) leftover.remove();
-      }
-    })();
+    // Ids must be unique per attempt: Mermaid refuses to reuse one that is still on the page.
+    const renderId = `gf-${id}-${resolvedTheme ?? "light"}-${Date.now().toString(36)}`;
+    renderDiagram(renderId, chart, resolvedTheme === "dark")
+      .then((out) => {
+        if (!alive) return;
+        setSvg(out);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setSvg(null);
+        setError(err instanceof Error ? err.message.split("\n")[0]! : "Diagram could not be rendered.");
+      });
     return () => {
       alive = false;
     };
   }, [chart, id, resolvedTheme]);
 
-  if (error) return <DiagramFallback chart={chart} className={className} />;
+  if (error) return <DiagramFallback chart={chart} className={className} reason={error} />;
   if (!svg) return <div className={cn("h-32 animate-pulse rounded-md bg-muted/50", className)} />;
   return <div ref={ref} className={cn("gf-mermaid overflow-x-auto rounded-md border bg-card p-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full", className)} dangerouslySetInnerHTML={{ __html: svg }} />;
 }

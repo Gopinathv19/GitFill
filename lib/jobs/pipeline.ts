@@ -18,7 +18,7 @@ import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
 import { parseDeckSpec } from "@/lib/presentation/legacy";
 import { withLabels } from "@/lib/presentation/labels";
 import { deckSpecSchema, normalizeDeckSpec, type DeckSpec } from "@/lib/presentation/spec";
-import { getStorage, safeFilename } from "@/lib/storage";
+import { ArtifactMissingError, getStorage, safeFilename } from "@/lib/storage";
 import { generateRequestSchema, reviseRequestSchema } from "@/lib/validation/request";
 import { DbRecorder } from "./db-recorder";
 import { runCompareJob, runHandbookJob, runReuseJob } from "./document-jobs";
@@ -246,7 +246,14 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   ];
   const readme = (await db.select().from(artifacts).where(and(eq(artifacts.deckVersionId, latest.id), eq(artifacts.artifactType, "readme"))))[0];
   // The README describes the repository, not the deck, so revisions carry it forward unchanged.
-  if (readme) extra.push({ type: "readme", name: "README.md", data: await getStorage().get(readme.storageKey), mime: readme.mimeType });
+  // Its bytes may be gone (storage cleared since the previous version); the revision still proceeds.
+  if (readme) {
+    const data = await getStorage().get(readme.storageKey).catch((err: unknown) => {
+      if (err instanceof ArtifactMissingError) return null;
+      throw err;
+    });
+    if (data) extra.push({ type: "readme", name: "README.md", data, mime: readme.mimeType });
+  }
 
   await persistVersion(db, {
     job,

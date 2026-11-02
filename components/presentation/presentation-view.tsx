@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, FileCheck2, Loader2, ShieldCheck } from "lucide-react";
 import { ActivityTimeline } from "@/components/jobs/activity-timeline";
+import { ArtifactImage } from "@/components/shared/artifact-image";
 import { JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/components/shared/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -226,8 +227,13 @@ export function PresentationView({ deckId }: { deckId: string }) {
         ) : null}
         {current ? (
           <div className="group relative bg-black">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img key={current.key} src={current.src} alt={`Slide ${index + 1}: ${current.title}`} className={cx("aspect-video w-full object-contain transition-opacity", busy(current.slideId) && "opacity-50")} />
+            <ArtifactImage
+              key={current.key}
+              src={current.src}
+              alt={`Slide ${index + 1}: ${current.title}`}
+              className={cx("aspect-video w-full object-contain transition-opacity", busy(current.slideId) && "opacity-50")}
+              fallbackClassName="aspect-video w-full"
+            />
             {busy(current.slideId) ? (
               <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1 text-xs text-white backdrop-blur">
                 <Loader2 className="size-3.5 animate-spin" /> Rewriting this slide…
@@ -258,8 +264,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
               aria-label={`Show slide ${i + 1}${busy(f.slideId) ? " (being rewritten)" : ""}`}
               aria-current={i === index}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={f.src} alt="" className={cx("h-[4.5rem] w-32 object-cover", busy(f.slideId) && "opacity-40")} />
+              <ArtifactImage src={f.src} className={cx("h-[4.5rem] w-32 object-cover", busy(f.slideId) && "opacity-40")} fallbackClassName="h-[4.5rem] w-32" />
               {busy(f.slideId) ? <Loader2 className="absolute inset-0 m-auto size-5 animate-spin text-white" /> : null}
             </button>
           ))}
