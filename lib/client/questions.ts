@@ -37,6 +37,21 @@ export function formatQuestions(ask: AskUser): string {
   return [ask.intro.trim(), `${FENCE}\n${JSON.stringify({ questions: ask.questions })}\n\`\`\``].filter(Boolean).join("\n\n");
 }
 
+/**
+ * How many rounds of questions the agent has asked since work was last started (an assistant
+ * message with jobs), so the chat's intent loop has a real limit.
+ */
+export function questionRounds(history: Array<{ role: string; content: string; jobIds?: string[] }>): number {
+  let rounds = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!;
+    if (m.role !== "assistant") continue;
+    if (m.jobIds?.length) break;
+    if (BLOCK.test(m.content)) rounds++;
+  }
+  return rounds;
+}
+
 /** Splits a reply into its text and its questions block, if it has a valid one. */
 export function parseQuestions(content: string): { text: string; ask: AskUser | null } {
   const match = BLOCK.exec(content);

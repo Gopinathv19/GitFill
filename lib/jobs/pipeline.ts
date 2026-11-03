@@ -7,12 +7,15 @@ import type { RepositoryAnalysis } from "@/lib/agent/analysis-schema";
 import { analyzeRepository } from "@/lib/agent/analyze";
 import { applyRevision, deckBrief, deckEvidence, planDeck, planRevision } from "@/lib/agent/planner";
 import { githubClientForJob } from "@/lib/auth/github-token";
+import type { GitHubClient } from "@/lib/connectors/github/client";
 import { ingestGitHubRepository } from "@/lib/connectors/github/ingest";
 import type { SourceSnapshot } from "@/lib/connectors/types";
 import type { Database } from "@/lib/db";
 import { artifacts, deckVersions, decks, evidenceClaims, generationJobs, projects, repositorySnapshots, type ArtifactType } from "@/lib/db/schema";
 import { buildEvidenceReport } from "@/lib/documents/evidence-report";
 import { generateReadme } from "@/lib/documents/readme";
+import { readRepoBrand, type RepoBrand } from "@/lib/gitfill/brand";
+import { describeGitfill, readGitfill } from "@/lib/gitfill/read";
 import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
 import { parseDeckSpec } from "@/lib/presentation/legacy";
@@ -108,22 +111,33 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   // 1. Connector: resolve the repository to an exact commit and read prioritized files.
   await recorder.setStage("analyzing_repository");
   const ingestEvent = await recorder.start("tool", "inspect_repository", { url: request.repositoryUrl, branch: request.branch });
-  const snapshot = await ingestGitHubRepository({ url: request.repositoryUrl, branch: request.branch, client: await githubClientForJob(db, job) }).catch(async (err) => {
+  const github = await githubClientForJob(db, job);
+  const snapshot = await ingestGitHubRepository({ url: request.repositoryUrl, branch: request.branch, client: github }).catch(async (err) => {
     await ingestEvent.fail(publicErrorMessage(err));
     throw err;
   });
   await ingestEvent.succeed({ repository: snapshot.displayName, commit: snapshot.version.slice(0, 7), files: snapshot.stats.selectedFiles, tree: snapshot.stats.totalEntries });
   await db.update(generationJobs).set({ branch: snapshot.branch, commitSha: snapshot.version }).where(eq(generationJobs.id, job.id));
 
+  // The team's .gitfill folder (notes, brand.json) and the application's own look from its code.
+  const at = { owner: String(snapshot.metadata.owner), name: String(snapshot.metadata.repo), sha: snapshot.version, paths: snapshot.inventory };
+  const gitfillEvent = await recorder.start("tool", "read_gitfill", { repository: snapshot.displayName });
+  const gitfill = await readGitfill(github, at).catch(() => null);
+  await gitfillEvent.succeed({ present: gitfill?.present ?? false, images: gitfill?.assets.filter((a) => a.kind === "image").length ?? 0, notes: gitfill?.notes.map((n) => n.path) ?? [] });
+  // A gallery template the user picked keeps its own look unless they asked for the app's.
+  const useRepoBrand = request.repoBrand ?? !request.theme;
+  const repoBrand = useRepoBrand ? await readRepoBrandEvent(recorder, github, at) : null;
+
   // What the user uploaded for this deck: screenshots to show, documents to draw from, a template or logo.
   const workspaceId = (await db.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, job.projectId)))[0]?.workspaceId;
   const uploadRows = workspaceId ? await uploadsByIds(db, workspaceId, [...new Set([...request.assetIds, ...(request.brand?.logoAssetId ? [request.brand.logoAssetId] : [])])]) : [];
   const materialRows = uploadRows.filter((u) => request.assetIds.includes(u.id) && u.kind !== "template");
   const materials = toMaterials(materialRows);
-  const brand = resolveBrand(request.brand, uploadRows.filter((u) => request.assetIds.includes(u.id)));
+  const brand = resolveBrand(request.brand, uploadRows.filter((u) => request.assetIds.includes(u.id)), repoBrand?.brand);
+  const teamNotes = gitfill?.present ? describeGitfill(gitfill) : "";
 
   // 2. Analysis agent: real tool loop with verified evidence, steered by what the deck is for.
-  const analysis = await analyzeRepository({ client, snapshot, userRequest: deckBrief(request), recorder });
+  const analysis = await analyzeRepository({ client, snapshot, userRequest: deckBrief({ ...request, teamNotes }), recorder });
   const facts = codeFacts(analysis.context);
   const paths = repositoryPaths(analysis.context);
 
@@ -170,7 +184,7 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
 
   // 3. Planner: Muse Wonder outlines the deck, then each page is composed in parallel.
   await recorder.setStage("planning_presentation");
-  const planned = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request: { ...request, brand }, recorder, facts, materials, paths });
+  const planned = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request: { ...request, brand, teamNotes }, recorder, facts, materials, paths });
   const spec = planned.spec;
 
   const [deck] = await db.insert(decks).values({ projectId: job.projectId, snapshotId: snap!.id, title: spec.title }).returning();
@@ -411,14 +425,29 @@ function mimeOf(key: string): string {
 }
 
 /**
- * The deck's brand: what the user set, on top of the theme of a .pptx template they uploaded.
- * Invalid values from a template are dropped rather than failing the deck.
+ * The deck's brand: what the user set, on top of the theme of a .pptx template they uploaded, on top
+ * of the application's own look read from its repository. Invalid values from a template are dropped
+ * rather than failing the deck.
  */
-function resolveBrand(requested: Brand | undefined, rows: UploadRow[]): Brand | undefined {
+function resolveBrand(requested: Brand | undefined, rows: UploadRow[], fromRepo?: Brand): Brand | undefined {
   const template = rows.find((u) => u.kind === "template");
   const fromTemplate = template ? brandSchema.safeParse((template.metadata as { brand?: unknown }).brand ?? {}) : null;
-  const merged = { ...(fromTemplate?.success ? fromTemplate.data : {}), ...(requested ?? {}) };
+  const merged = { ...(fromRepo ?? {}), ...(fromTemplate?.success ? fromTemplate.data : {}), ...(requested ?? {}) };
   return Object.keys(merged).length ? merged : undefined;
+}
+
+/** Reads the application's own look, recorded as a step so the user sees what was used and what is missing. */
+async function readRepoBrandEvent(recorder: DbRecorder, github: GitHubClient, at: Parameters<typeof readRepoBrand>[1]): Promise<RepoBrand | null> {
+  const event = await recorder.start("tool", "read_repo_brand", { repository: `${at.owner}/${at.name}` });
+  try {
+    const found = await readRepoBrand(github, at);
+    await event.succeed({ brand: found.brand, sources: found.sources, missing: found.missing });
+    return found;
+  } catch (err) {
+    // The deck still renders in its template's look.
+    await event.fail(publicErrorMessage(err));
+    return null;
+  }
 }
 
 /** Material a deck was made with, re-read for a revision; deleted uploads keep their description only. */

@@ -36,7 +36,15 @@ export type BrainstormSpec = z.infer<typeof brainstormSpecSchema>;
  * explores the repository through the shared tools (claims are checked against the real lines),
  * then submits the spec; code renders it as Markdown with the evidence for each code reference.
  */
-export async function writeBrainstormSpec(opts: { client: MuseClient; snapshot: SourceSnapshot; conversation: string; title: string; recorder: RunRecorder }): Promise<{ spec: BrainstormSpec; markdown: string; claims: Claim[] }> {
+export async function writeBrainstormSpec(opts: {
+  client: MuseClient;
+  snapshot: SourceSnapshot;
+  conversation: string;
+  title: string;
+  recorder: RunRecorder;
+  /** The repository's .gitfill folder as text (describeGitfill): team notes and earlier knowledge specs. */
+  gitfill?: string;
+}): Promise<{ spec: BrainstormSpec; markdown: string; claims: Claim[] }> {
   const context = createRepositoryContext(opts.snapshot, { refPrefix: "C", maxClaims: 60 });
   const tools = [
     ...createRepositoryTools(context),
@@ -54,7 +62,7 @@ export async function writeBrainstormSpec(opts: { client: MuseClient; snapshot: 
     model: modelFor("analyst"),
     purpose: "write_brainstorm_spec",
     system: BRAINSTORM_SPEC_PROMPT,
-    messages: [{ role: "user", content: [`Working title: ${opts.title}`, `<conversation>\n${opts.conversation}\n</conversation>`, described.text].join("\n\n") }],
+    messages: [{ role: "user", content: [`Working title: ${opts.title}`, `<conversation>\n${opts.conversation}\n</conversation>`, opts.gitfill ?? "", described.text].filter(Boolean).join("\n\n") }],
     tools,
     recorder: opts.recorder,
     maxTurns: 12,

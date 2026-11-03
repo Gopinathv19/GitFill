@@ -419,4 +419,5 @@ Rules
 - The approach follows the repository's existing patterns and names them; do not introduce new frameworks unless the conversation decided to.
 - Tasks are small, ordered and independently checkable; each names the files it changes or adds. Include writing tests where the repository has tests.
 - Acceptance criteria are checkable: observable behaviour, tests that must exist and pass, commands that must succeed (only commands found in the repository).
+- Specs already in .gitfill/knowledge are earlier plans, not facts about the code: when this idea extends or overlaps one, say so in the summary and name its path, and do not repeat its tasks.
 - Keep it tight: a coding agent should be able to start from the first task immediately.`;

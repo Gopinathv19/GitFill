@@ -18,7 +18,7 @@ interface PullRequestRecord {
 /** Where a document of this kind lands in the repository, as the button describes it. */
 export function destinationLabel(kind: string): string {
   if (kind === "readme") return "README.md";
-  if (kind === "brainstorm" || kind === "implementation_brief") return ".gitfill/brainstorm/";
+  if (kind === "brainstorm" || kind === "implementation_brief") return ".gitfill/knowledge/";
   return ".gitfill/docs/";
 }
 

@@ -11,7 +11,9 @@ import { README_TEMPLATES, type ChosenSection } from "@/lib/readme/templates";
 import { badgeMarkdown, readmeTheme } from "@/lib/readme/visuals";
 import { getStorage } from "@/lib/storage";
 import { uploadsByIds } from "@/lib/uploads/service";
+import { assertDocumentAccess } from "@/lib/workspaces/service";
 import { writeBrainstormSpec } from "@/lib/gitfill/brainstorm";
+import { openDocumentPullRequest } from "@/lib/gitfill/deliver";
 import { describeGitfill, readGitfill } from "@/lib/gitfill/read";
 import { brainstormRequestSchema, readmeRequestSchema } from "@/lib/validation/request";
 import type { DbRecorder } from "./db-recorder";
@@ -138,7 +140,11 @@ export async function runReadmeJob(db: Database, job: Job, recorder: DbRecorder,
   await complete(db, job.id, doc.id, snap.id);
 }
 
-/** A brainstorm from chat, written as an implementation spec grounded in the code. */
+/**
+ * A brainstorm from chat, written as an implementation spec grounded in the code and the specs
+ * already in .gitfill/knowledge. When asked, the spec is then opened as a pull request into
+ * .gitfill/knowledge so coding agents can pick it up; a failed pull request keeps the document.
+ */
 export async function runBrainstormJob(db: Database, job: Job, recorder: DbRecorder, client: MuseClient) {
   const request = brainstormRequestSchema.parse(job.options);
   await recorder.setStage("analyzing_repository");
@@ -146,8 +152,12 @@ export async function runBrainstormJob(db: Database, job: Job, recorder: DbRecor
   const snapshot = await ingest(github, job.repositoryUrl, request.branch ?? job.branch ?? undefined, recorder);
   await db.update(generationJobs).set({ branch: snapshot.branch, commitSha: snapshot.version }).where(eq(generationJobs.id, job.id));
 
+  const gitfillEvent = await recorder.start("tool", "read_gitfill", { repository: snapshot.displayName });
+  const gitfill = await readGitfill(github, { owner: String(snapshot.metadata.owner), name: String(snapshot.metadata.repo), sha: snapshot.version, paths: snapshot.inventory }).catch(() => null);
+  await gitfillEvent.succeed({ present: gitfill?.present ?? false, knowledge: gitfill?.knowledge.map((k) => k.path) ?? [] });
+
   await recorder.setStage("composing_document");
-  const result = await writeBrainstormSpec({ client, snapshot, conversation: request.conversation, title: request.title, recorder });
+  const result = await writeBrainstormSpec({ client, snapshot, conversation: request.conversation, title: request.title, recorder, gitfill: gitfill?.present ? describeGitfill(gitfill) : undefined });
   const snap = await saveSnapshot(db, job.projectId, snapshot, {}, result.claims);
   const doc = await saveDocument(db, {
     projectId: job.projectId,
@@ -159,5 +169,15 @@ export async function runBrainstormJob(db: Database, job: Job, recorder: DbRecor
     snapshotId: snap.id,
     jobId: job.id,
   });
+  if (request.pullRequest && request.requestedBy) {
+    const prEvent = await recorder.start("tool", "open_pull_request", { path: ".gitfill/knowledge/" });
+    try {
+      const pr = await openDocumentPullRequest(db, request.requestedBy, await assertDocumentAccess(db, request.requestedBy, doc.id));
+      await prEvent.succeed({ pullRequest: pr.url, file: pr.path });
+    } catch (err) {
+      // The spec is saved either way; the user can open the pull request from the document.
+      await prEvent.fail(err instanceof Error ? err.message : "Could not open the pull request.");
+    }
+  }
   await complete(db, job.id, doc.id, snap.id);
 }

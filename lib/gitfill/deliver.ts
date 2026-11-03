@@ -8,7 +8,7 @@ import { documents, type DocumentKind } from "@/lib/db/schema";
 import { documentFiles } from "@/lib/readme/files";
 import { getStorage } from "@/lib/storage";
 import { getRepository } from "@/lib/workspaces/service";
-import { brainstormPath, DOCS_DIR, DOCS_INDEX, docPath, GITFILL_README, GITFILL_README_TEXT, readFrontMatter, withFrontMatter } from "./layout";
+import { DOCS_DIR, DOCS_INDEX, docPath, GITFILL_DIR, GITFILL_README, GITFILL_README_TEXT, isKnowledgeSpec, KNOWLEDGE_DIR, KNOWLEDGE_INDEX, knowledgePath, readFrontMatter, withFrontMatter } from "./layout";
 
 export class DeliveryError extends Error {
   override name = "DeliveryError";
@@ -32,13 +32,13 @@ export interface PullRequestRecord {
 }
 
 /** Where each kind of document lives in the repository. */
-export function destinationOf(kind: DocumentKind): "readme" | "docs" | "brainstorm" {
+export function destinationOf(kind: DocumentKind): "readme" | "docs" | "knowledge" {
   switch (kind) {
     case "readme":
       return "readme";
     case "brainstorm":
     case "implementation_brief":
-      return "brainstorm";
+      return "knowledge";
     default:
       return "docs";
   }
@@ -46,8 +46,8 @@ export function destinationOf(kind: DocumentKind): "readme" | "docs" | "brainsto
 
 /**
  * The files one document becomes in the repository: README.md itself, a doc under .gitfill/docs with
- * an updated index, or a brainstorm spec under .gitfill/brainstorm. The folder's own README is added
- * the first time. Pure, so it can be checked without GitHub.
+ * an updated index, or a spec under .gitfill/knowledge with an updated index for coding agents. The
+ * folder's own README is added the first time. Pure, so it can be checked without GitHub.
  */
 export function planFiles(opts: {
   doc: { kind: DocumentKind; title: string; markdown: string; sourceCommit: string };
@@ -55,6 +55,8 @@ export function planFiles(opts: {
   hasGitfillReadme: boolean;
   /** Docs already in .gitfill/docs with their front matter, for the index. */
   existingDocs: Array<{ path: string; title: string | null; sourceCommit: string | null }>;
+  /** Specs already in .gitfill/knowledge (or the legacy brainstorm/) with their front matter, for its index. */
+  existingKnowledge?: Array<{ path: string; title: string | null; sourceCommit: string | null; status: string | null }>;
   /** Files a README ships with (docs/readme/*), committed next to it. */
   assets?: PlannedFile[];
 }): { path: string; files: PlannedFile[] } {
@@ -68,9 +70,18 @@ export function planFiles(opts: {
     files.push({ path, content: doc.markdown.trim() + "\n" });
     // Only files under docs/readme/ ship this way; a stored path can never reach elsewhere in the tree.
     for (const a of opts.assets ?? []) if (/^docs\/readme\/[\w.-]+$/.test(a.path)) files.push(a);
-  } else if (dest === "brainstorm") {
-    path = brainstormPath(doc.title, now);
-    files.push({ path, content: withFrontMatter({ gitfill: "brainstorm", title: doc.title, source_commit: doc.sourceCommit, generated, status: "ready" }, doc.markdown) });
+  } else if (dest === "knowledge") {
+    path = knowledgePath(doc.title, now);
+    files.push({ path, content: withFrontMatter({ gitfill: "knowledge", title: doc.title, source_commit: doc.sourceCommit, generated, status: "ready" }, doc.markdown) });
+    const specs = new Map((opts.existingKnowledge ?? []).filter((d) => isKnowledgeSpec(d.path)).map((d) => [d.path, d]));
+    specs.set(path, { path, title: doc.title, sourceCommit: doc.sourceCommit, status: "ready" });
+    const rows = [...specs.values()]
+      .sort((a, b) => b.path.localeCompare(a.path))
+      .map((d) => `| [${(d.title ?? d.path.replace(/^.*\//, "")).replace(/\|/g, "\\|")}](${relativeTo(KNOWLEDGE_DIR, d.path)}) | ${d.status ?? "unknown"} | ${d.sourceCommit ? `\`${d.sourceCommit.slice(0, 7)}\`` : "unknown"} |`);
+    files.push({
+      path: KNOWLEDGE_INDEX,
+      content: `# Knowledge\n\nIdeas worked out in GitFill's chat, written as implementation specs for coding agents. Newest first.\n\n**Coding agents:** pick a spec with status \`ready\`, read all of it, resolve its open questions with the team, follow its tasks in order and check every acceptance criterion. When it is done, set its \`status\` to \`done\` here and in the spec's front matter.\n\n| Spec | Status | Written from |\n|---|---|---|\n${rows.join("\n")}\n`,
+    });
   } else {
     path = docPath(doc.title);
     files.push({ path, content: withFrontMatter({ gitfill: "docs", title: doc.title, source_commit: doc.sourceCommit, generated }, doc.markdown) });
@@ -86,6 +97,11 @@ export function planFiles(opts: {
   }
   if (!opts.hasGitfillReadme) files.push({ path: GITFILL_README, content: GITFILL_README_TEXT });
   return { path, files };
+}
+
+/** A link from the index in `dir` to `path`; legacy brainstorm/ specs are one level up. */
+function relativeTo(dir: string, path: string): string {
+  return path.startsWith(`${dir}/`) ? path.slice(dir.length + 1) : `../${path.slice(GITFILL_DIR.length + 1)}`;
 }
 
 /**
@@ -122,6 +138,15 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
     existingDocs.push({ path: e.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null });
   }
 
+  const existingKnowledge = [];
+  if (destinationOf(doc.kind) === "knowledge") {
+    for (const e of tree.entries.filter((x) => x.type === "blob" && isKnowledgeSpec(x.path)).slice(0, 80)) {
+      const text = await client.getFileTextIfExists(ref.owner, ref.repo, head.sha, e.path, 4000);
+      const fm = text ? readFrontMatter(text) : {};
+      existingKnowledge.push({ path: e.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null, status: fm.status ?? null });
+    }
+  }
+
   const meta = (doc.metadata ?? {}) as Record<string, unknown>;
   const sourceCommit = typeof meta.commitSha === "string" ? meta.commitSha : head.sha;
   const assets: PlannedFile[] = [];
@@ -134,10 +159,11 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
     now: new Date(),
     hasGitfillReadme: tree.entries.some((e) => e.path === GITFILL_README),
     existingDocs,
+    existingKnowledge,
     assets,
   });
   const dest = destinationOf(doc.kind);
-  const what = dest === "readme" ? "README" : dest === "brainstorm" ? "brainstorm spec" : "doc";
+  const what = dest === "readme" ? "README" : dest === "knowledge" ? "knowledge spec" : "doc";
   const branch = `gitfill/${dest}-${plan.path.replace(/^.*\//, "").replace(/\.md$/i, "").toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 40)}-${randomBytes(3).toString("hex")}`;
   const pr = await writer.openPullRequest(ref.owner, ref.repo, {
     base,
@@ -149,8 +175,8 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
       "",
       ...plan.files.map((f) => `- \`${f.path}\``),
       "",
-      dest === "brainstorm"
-        ? "The spec is written for a coding agent: point Claude Code (or another agent) at the file and ask it to implement it. Review the decisions before merging."
+      dest === "knowledge"
+        ? `The spec is written for a coding agent: point Claude Code (or another agent) at \`${plan.path}\` (listed in \`${KNOWLEDGE_INDEX}\`) and ask it to implement it. Review the decisions and open questions before merging.`
         : "Review it like any other change; every statement was checked against the code when it was written.",
     ].join("\n"),
     files: plan.files,

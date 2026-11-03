@@ -28,12 +28,34 @@ describe("planFiles", () => {
     expect(plan.files).toHaveLength(2);
   });
 
-  it("writes brainstorms and implementation briefs as dated, ready specs", () => {
+  it("writes brainstorms and implementation briefs as dated, ready specs in .gitfill/knowledge", () => {
     for (const kind of ["brainstorm", "implementation_brief"] as const) {
       const plan = planFiles({ doc: doc(kind, "Group booking!"), now, hasGitfillReadme: true, existingDocs: [] });
-      expect(plan.path).toBe(".gitfill/brainstorm/2026-11-02-group-booking.md");
-      expect(readFrontMatter(plan.files[0]!.content)).toMatchObject({ gitfill: "brainstorm", status: "ready" });
+      expect(plan.path).toBe(".gitfill/knowledge/2026-11-02-group-booking.md");
+      expect(readFrontMatter(plan.files[0]!.content)).toMatchObject({ gitfill: "knowledge", status: "ready" });
     }
+  });
+
+  it("keeps a knowledge index for coding agents, newest first, including legacy brainstorm specs", () => {
+    const plan = planFiles({
+      doc: doc("brainstorm", "Group booking"),
+      now,
+      hasGitfillReadme: true,
+      existingDocs: [],
+      existingKnowledge: [
+        { path: ".gitfill/knowledge/2026-10-01-refunds.md", title: "Refunds", sourceCommit: "2222222bbb", status: "done" },
+        { path: ".gitfill/brainstorm/2026-09-01-old-idea.md", title: "Old idea", sourceCommit: null, status: "ready" },
+        { path: ".gitfill/knowledge/index.md", title: null, sourceCommit: null, status: null },
+      ],
+    });
+    const index = plan.files.find((f) => f.path === ".gitfill/knowledge/index.md")!;
+    const rows = index.content.split("\n").filter((l) => l.startsWith("| ["));
+    expect(rows).toEqual([
+      "| [Group booking](2026-11-02-group-booking.md) | ready | `abc1234` |",
+      "| [Refunds](2026-10-01-refunds.md) | done | `2222222` |",
+      "| [Old idea](../brainstorm/2026-09-01-old-idea.md) | ready | unknown |",
+    ]);
+    expect(plan.files).toHaveLength(2);
   });
 });
 
@@ -47,10 +69,10 @@ describe("layout", () => {
 
   it("classifies assets and describes them for writers", () => {
     expect(["shot.PNG", "demo.mp4", "notes.md", "brand.json", "x.bin"].map(assetKind)).toEqual(["image", "video", "notes", "brand", "other"]);
-    const text = describeGitfill({ present: true, hasReadme: true, assets: [{ path: ".gitfill/assets/shot.png", kind: "image", sizeBytes: 20480 }], notes: [{ path: ".gitfill/assets/product.md", content: "We help travel agents." }], docs: [], brainstorms: [] });
+    const text = describeGitfill({ present: true, hasReadme: true, assets: [{ path: ".gitfill/assets/shot.png", kind: "image", sizeBytes: 20480 }], notes: [{ path: ".gitfill/assets/product.md", content: "We help travel agents." }], docs: [], knowledge: [] });
     expect(text).toContain(".gitfill/assets/shot.png (20 KB)");
     expect(text).toContain('<team_note path=".gitfill/assets/product.md">');
-    expect(describeGitfill({ present: false, hasReadme: false, assets: [], notes: [], docs: [], brainstorms: [] })).toMatch(/no \.gitfill folder/);
+    expect(describeGitfill({ present: false, hasReadme: false, assets: [], notes: [], docs: [], knowledge: [] })).toMatch(/no \.gitfill folder/);
   });
 });
 

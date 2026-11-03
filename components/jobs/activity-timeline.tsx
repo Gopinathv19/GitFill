@@ -56,6 +56,8 @@ const TITLES: Record<string, string> = {
   generate_pptx: "Package .pptx",
   generate_readme: "Write README.md",
   read_gitfill: "Read the .gitfill folder",
+  read_repo_brand: "Read the app's own colours and fonts",
+  open_pull_request: "Open a pull request",
   finish_spec: "Finish the spec",
   write_video: "Write the video",
   edit_video: "Edit the video",

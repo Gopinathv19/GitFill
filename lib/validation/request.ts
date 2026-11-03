@@ -18,6 +18,8 @@ export const generateRequestSchema = z.object({
   /** Template id; empty means the deck type's suggested template. */
   theme: z.enum(THEMES).optional(),
   brand: brandSchema.optional(),
+  /** Style the deck in the analyzed application's own colours and fonts (from its CSS, Tailwind config and .gitfill/assets/brand.json). Unset: yes unless a template was picked. */
+  repoBrand: z.boolean().optional(),
   instructions: z.string().trim().max(2000).default(""),
   /** The reader brief agreed with the user in chat: who reads it, why, framing, must-cover and skip. */
   brief: z.string().trim().max(4000).default(""),
@@ -99,6 +101,10 @@ export const brainstormRequestSchema = z.object({
   /** The brainstorm as it happened in chat, captured when the spec was requested. */
   conversation: z.string().trim().min(20).max(60_000),
   branch: z.string().trim().max(200).optional(),
+  /** Open a pull request that adds the spec to .gitfill/knowledge as soon as it is written. */
+  pullRequest: z.boolean().default(false),
+  /** The user who asked; the pull request is opened with their GitHub access. Set by the server. */
+  requestedBy: z.string().uuid().optional(),
 });
 
 export type BrainstormRequest = z.infer<typeof brainstormRequestSchema>;

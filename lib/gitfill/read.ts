@@ -1,5 +1,5 @@
 import type { GitHubClient } from "@/lib/connectors/github/client";
-import { ASSETS_DIR, BRAINSTORM_DIR, DOCS_DIR, DOCS_INDEX, GITFILL_DIR, readFrontMatter } from "./layout";
+import { ASSETS_DIR, DOCS_DIR, DOCS_INDEX, GITFILL_DIR, isKnowledgeSpec, readFrontMatter } from "./layout";
 
 export type AssetKind = "image" | "video" | "notes" | "brand" | "other";
 
@@ -17,7 +17,8 @@ export interface GitfillContext {
   /** Text the team wrote for GitFill (Markdown/text notes and brand.json), capped. */
   notes: Array<{ path: string; content: string }>;
   docs: Array<{ path: string; title: string | null; sourceCommit: string | null }>;
-  brainstorms: string[];
+  /** Specs in .gitfill/knowledge (and the legacy brainstorm/), so new work can build on earlier decisions. */
+  knowledge: Array<{ path: string; title: string | null; status: string | null }>;
 }
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
@@ -60,13 +61,19 @@ export async function readGitfill(
     const fm = head ? readFrontMatter(head) : {};
     docs.push({ path: d.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null });
   }
+  const knowledge: GitfillContext["knowledge"] = [];
+  for (const k of inside.filter((p) => isKnowledgeSpec(p.path)).slice(0, 30)) {
+    const head = await client.getFileTextIfExists(repo.owner, repo.name, repo.sha, k.path, 4000).catch(() => null);
+    const fm = head ? readFrontMatter(head) : {};
+    knowledge.push({ path: k.path, title: fm.title ?? null, status: fm.status ?? null });
+  }
   return {
     present: inside.length > 0,
     hasReadme: inside.some((p) => p.path === `${GITFILL_DIR}/README.md`),
     assets,
     notes,
     docs,
-    brainstorms: inside.filter((p) => p.path.startsWith(`${BRAINSTORM_DIR}/`) && p.path.endsWith(".md")).map((p) => p.path),
+    knowledge,
   };
 }
 
@@ -81,6 +88,7 @@ export function describeGitfill(ctx: GitfillContext): string {
     images.length ? `Images you may link (use these exact relative paths):\n${images.join("\n")}` : "No images were provided.",
     videos.length ? `Videos:\n${videos.join("\n")}` : "",
     ...ctx.notes.map((n) => `<team_note path="${n.path}">\n${n.content}\n</team_note>`),
+    ctx.knowledge.length ? `Implementation specs in .gitfill/knowledge (earlier brainstorms; planned work, not facts about the code):\n${ctx.knowledge.map((k) => `- ${k.path}${k.title ? ` — ${k.title}` : ""}${k.status ? ` [${k.status}]` : ""}`).join("\n")}` : "",
     ctx.docs.length ? `Docs GitFill wrote before:\n${ctx.docs.map((d) => `- ${d.path}${d.title ? ` — ${d.title}` : ""}${d.sourceCommit ? ` (from ${d.sourceCommit.slice(0, 7)})` : ""}`).join("\n")}` : "",
   ]
     .filter(Boolean)

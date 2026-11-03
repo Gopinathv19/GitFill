@@ -89,7 +89,7 @@ export async function startReadme(db: Database, userId: string, workspaceId: str
 export async function startBrainstorm(db: Database, userId: string, workspaceId: string, repositoryId: string, options: Partial<BrainstormRequest>) {
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   const url = requireUrl(repo);
-  const request = brainstormRequestSchema.parse({ ...options, branch: options.branch ?? repo.defaultBranch ?? undefined });
+  const request = brainstormRequestSchema.parse({ ...options, branch: options.branch ?? repo.defaultBranch ?? undefined, requestedBy: userId });
   const job = await enqueueDocumentJob(db, { workspaceId, repositoryId }, { kind: "brainstorm", repositoryUrl: url, branch: request.branch, prompt: `Brainstorm spec: ${request.title}`, options: request, projectName: `${repo.owner}/${repo.name}` });
   kickInlineWorker(db);
   return { job, repo, request };

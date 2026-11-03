@@ -11,15 +11,19 @@ import { README_TEMPLATE_IDS, README_TEMPLATES, SECTIONS } from "@/lib/readme/te
 import { HANDBOOK_AUDIENCES, REUSE_KINDS } from "@/lib/understanding/schemas";
 import { ActionError, askRepository, openPullRequest, openWorkspaceRepository, revisePresentation, startBrainstorm, startReadme, startVideo, startComparison, startHandbook, startPresentation, startReuseBrief } from "@/lib/workspaces/actions";
 import { getWorkspace, listMessages } from "@/lib/workspaces/service";
-import { askUserSchema, formatQuestions, type AskUser } from "@/lib/client/questions";
+import { askUserSchema, formatQuestions, questionRounds, type AskUser } from "@/lib/client/questions";
 import { AppNotInstalledError } from "@/lib/connectors/github/app";
 import { GitHubError } from "@/lib/connectors/github/client";
+import { describeRepoBrand, readRepoBrandFromSource } from "@/lib/gitfill/brand";
 import { DeliveryError } from "@/lib/gitfill/deliver";
 import type { CodeSource } from "@/lib/repo-store";
 import { MemoryRecorder, type LiveEvent } from "./recorder";
 import { createSearchTools } from "./search-tools";
 import { logTimings } from "./timings";
 import { defineTool, runToolLoop } from "./tool-loop";
+
+/** Rounds of ask_user the agent may spend agreeing a document's intent before it must start. */
+export const INTENT_MAX_ROUNDS = 3;
 
 const CHAT_SYSTEM_PROMPT = `You are GitFill, an assistant inside a user's workspace. GitFill helps developers understand, explain, reuse and evolve codebases. The workspace holds GitHub repositories and the documents and presentations generated from them.
 
@@ -34,21 +38,24 @@ You can act through tools:
 - start_reuse_brief to write an implementation brief that transfers patterns from a reference repository into a target repository. Runs in the background.
 - start_presentation to generate a validated presentation deck; revise_presentation to change one. Runs in the background.
 - start_readme to write or update a repository's README.md from the code and the team's .gitfill/assets (screenshots, logo, brand and notes). Runs in the background.
-- save_brainstorm to write the current brainstorm up as an implementation spec for a coding agent, grounded in the code. Runs in the background.
-- open_pull_request to add a finished document to its repository as a pull request: a README becomes README.md, handbooks and other docs go to .gitfill/docs/, brainstorm specs and implementation briefs to .gitfill/brainstorm/. Only when the user asks for it.
+- app_look to read the repository's own look (brand colours, background, fonts and where they come from, plus what is missing), for the look question before a presentation or README.
+- save_brainstorm to write the current brainstorm up as an implementation spec for a coding agent, grounded in the code, and (with pull_request) add it to the repository's .gitfill/knowledge folder. Runs in the background.
+- open_pull_request to add a finished document to its repository as a pull request: a README becomes README.md, handbooks and other docs go to .gitfill/docs/, brainstorm specs and implementation briefs to .gitfill/knowledge/ (with its index for coding agents). Only when the user asks for it.
 - start_video to make an explainer video (1080p MP4 with original music) and its thumbnail from an existing presentation. Runs in the background. A video needs a presentation of that repository; if there is none, offer to make the presentation first.
 Otherwise always finish with reply.
 
-Before a handbook, presentation or video: agree the intent
-A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So when the user asks for a handbook, presentation or video:
-1. Scout first. Look at the repository with list_files / grep / read_file (README, top-level directories, manifests, docs, entry points) until you know what is distinctive about it: its apps or modules, its audience-facing features, the external services or sponsors it highlights, its docs and screenshots.
-2. Work out which decisions about the document the request and the code leave open, and ask about those, and only those, with ask_user. Write the questions yourself for this repository; ground every option in something you found (name the real modules, features, services). 1-4 questions, one round. Add a short intro saying what you found.
-3. When the user answers (or says to just go ahead), write the brief and start the job. The brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
-Skip asking when the user has already given that intent, says "just go" / "use your judgment", or is asking for a revision. Never ask the same thing twice.
+Before a handbook, presentation, README or video: agree the intent, in rounds
+A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So before you start any of these jobs, run an intent loop of up to ${INTENT_MAX_ROUNDS} rounds of ask_user (the current round count is given at the end of this message):
+1. Scout first. Look at the repository with list_files / grep / read_file (README, top-level directories, manifests, docs, entry points, .gitfill/assets) until you know what is distinctive about it: its apps or modules, its audience-facing features, the external services or sponsors it highlights, its docs and screenshots.
+2. Round 1 — what and for whom. If the user has not said which format they want, ask it first, never pick it yourself: a presentation (slides to present), a document (a handbook to read: technical handbook, onboarding guide, deep dive…), a README, a video (made from a presentation) or a combination; say in each option what it is good for given what they asked. In the same round ask who the reader or audience is and the one thing they should leave with, and what scope (whole repository, one module, one feature, naming the real ones).
+3. Round 2 — content and look. Ask which flows or features to feature in depth (multiple: true) and what to skip; for a presentation its length (default 10 pages; speaker notes are always included); and the look: call app_look first and offer "the app's own look" (name the colours and fonts it found and where) against a GitFill template (a kind "template" question only when they want a template). Offer an upload question (kind "upload") for screenshots, a logo or documents unless they already attached some or .gitfill/assets has them.
+4. Last round — confirm. Write the brief you will use back to the user in a few lines (format, reader and goal, scope, must-cover with paths, skip, length, look, assets) as the intro of one ask_user question: "Generate it like this?" with options such as "Yes, generate" and "Change something". Start the job only after they confirm.
+Every round: 1-4 questions, each grounded in something you found (name the real modules, features, services; put the path in the option's detail), and a short intro saying what you learned from their last answers. Skip a round when its decisions are already made, and skip straight to the job when the user says "just go" / "use your judgment", asks for a revision, or the round limit is reached (then go with sensible defaults and say which you chose). Never ask the same thing twice.
+When you start the job, the brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
 
 Presentations
 - Decide the deck type from the request (${DECK_TYPES.map((t) => `${t}: ${DECK_TYPE_DEFS[t].label}`).join("; ")}); ask only when the request leaves it open.
-- Unless the user already chose a look, include one question with kind "template" so they pick from the template gallery; its options are template ids, the one that suits the deck type first. Templates:
+- The deck uses the app's own look (colours and fonts read from its stylesheets, Tailwind config and .gitfill/assets/brand.json) by default. When the user picks a gallery template instead, pass theme and app_look: false; when they want the template's layout with their app's colours, pass both theme and app_look: true. For a template, ask with kind "template"; its options are template ids, the one that suits the deck type first. Templates:
 ${describeTemplates()}
 - Unless the user already attached files, include one question with kind "upload" offering to take screenshots, a logo, a .pptx template (its colours and fonts become the deck's brand) or documents (product notes, results, roadmap); options name what would help this deck (e.g. "Screenshots of the dashboard").
 - Files the user attached appear in their messages as an \`attachments\` block with upload ids. Pass the ids of images and documents to use as asset_ids; a template's id too (its brand is applied).
@@ -60,10 +67,10 @@ READMEs
 - Pass the answers to start_readme: template, sections, banner/diagrams/badges, asset_ids from attachments, links, and their words as answers.
 
 Brainstorming
-When the user wants to think through a feature or change for a repository, be a sharp engineering partner: look at the relevant code first (list_files, grep, read_file), then discuss options and trade-offs grounded in what the code does today, ask focused questions one round at a time, and keep track of what has been decided. Do not write code. When they are happy with the idea, or ask to save or hand it off, call save_brainstorm with a short title; the spec is written from this conversation, so summarise the decisions in your last reply before saving if they are scattered.
+When the user wants to think through a feature or change for a repository, be a sharp engineering partner: look at the relevant code first (list_files, grep, read_file, and earlier specs in .gitfill/knowledge), then discuss options and trade-offs grounded in what the code does today, ask focused questions one round at a time (ask_user works here too), and keep track of what has been decided. Do not write code. When they are happy with the idea, or ask to save or hand it off, summarise the decisions and what is still open in one reply and ask whether to save it to the repository's .gitfill/knowledge folder as a pull request (so coding agents can build it) or only in GitFill. Then call save_brainstorm with a short title and pull_request set to their choice; the spec is written from this conversation, so the summary must be in it.
 
 The .gitfill folder
-Repositories can have a .gitfill folder: .gitfill/assets (screenshots, logo, brand.json and notes the team adds for GitFill), .gitfill/docs (docs GitFill wrote) and .gitfill/brainstorm (specs GitFill wrote for coding agents). If someone asks how to get better READMEs, decks or videos, suggest adding screenshots and a short product note to .gitfill/assets.
+Repositories can have a .gitfill folder: .gitfill/assets (screenshots, logo, brand.json and notes the team adds for GitFill; presentations, READMEs and specs all read it), .gitfill/docs (docs GitFill wrote) and .gitfill/knowledge (brainstorm specs GitFill wrote for coding agents, listed in .gitfill/knowledge/index.md; older repositories may have .gitfill/brainstorm). If someone asks how to get better READMEs, decks or videos, suggest adding screenshots, a brand.json and a short product note to .gitfill/assets. When app_look reports missing colours or fonts, tell the user they can add them in .gitfill/assets/brand.json.
 
 Rules:
 - Only start background work when the user clearly asks for it. If the request is ambiguous (several repositories and none named, missing commit refs), ask a short question instead.
@@ -161,6 +168,16 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
       run: async () => ({ shown: true }),
     }),
     defineTool({
+      name: "app_look",
+      description: "Read the repository's own look: brand colours, background, text colour and fonts from .gitfill/assets/brand.json, its stylesheets' CSS variables, its Tailwind config and the fonts it loads, with where each came from and what is missing.",
+      input: z.object({ repository_id: z.string().uuid() }),
+      run: async (i) =>
+        act(async () => {
+          const found = await readRepoBrandFromSource(await sourceFor(i.repository_id));
+          return { ...found, summary: describeRepoBrand(found) };
+        }, "Could not read the repository's look."),
+    }),
+    defineTool({
       name: "ask_codebase",
       description: "Answer a question about one repository's code now, with sources and an optional diagram. The answer goes to the user directly and ends the turn.",
       input: z.object({
@@ -233,6 +250,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         slide_count: z.number().int().min(4).max(20).optional(),
         minutes: z.number().int().min(1).max(90).optional().describe("Talk length, when the user gave one; sets the slide count."),
         theme: z.enum(THEMES).optional().describe("Template id the user picked."),
+        app_look: z.boolean().optional().describe("Use the app's own colours and fonts. Default: yes unless a template was picked."),
         brand_accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("Brand colour the user named, as #rrggbb."),
         logo_asset_id: z.string().uuid().optional().describe("Upload id of a logo image."),
         asset_ids: z.array(z.string().uuid()).max(30).optional().describe("Upload ids of screenshots, documents and templates to use."),
@@ -251,6 +269,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
             slideCount: i.slide_count,
             minutes: i.minutes,
             theme: i.theme,
+            repoBrand: i.app_look,
             brand,
             assetIds: i.asset_ids,
             mustCover: i.must_cover,
@@ -305,8 +324,12 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     }),
     defineTool({
       name: "save_brainstorm",
-      description: "Write this conversation's brainstorm up as an implementation spec for a coding agent, grounded in the repository's code. Returns a job id.",
-      input: z.object({ repository_id: z.string().uuid(), title: z.string().min(3).max(100).describe("Short name of the idea.") }),
+      description: "Write this conversation's brainstorm up as an implementation spec for a coding agent, grounded in the repository's code. With pull_request, also open a pull request adding it to .gitfill/knowledge. Returns a job id.",
+      input: z.object({
+        repository_id: z.string().uuid(),
+        title: z.string().min(3).max(100).describe("Short name of the idea."),
+        pull_request: z.boolean().default(false).describe("True when the user wants the spec in the repository's .gitfill/knowledge folder."),
+      }),
       run: async (i) =>
         act(async () => {
           // The spec is written from the conversation itself, so it carries every decision as it was made.
@@ -314,14 +337,14 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
             .map((m) => `${m.role === "user" ? "User" : "GitFill"}: ${m.content}`)
             .join("\n\n")
             .slice(-60_000);
-          const { job, repo } = await startBrainstorm(db, userId, workspaceId, i.repository_id, { title: i.title, conversation: transcript });
+          const { job, repo } = await startBrainstorm(db, userId, workspaceId, i.repository_id, { title: i.title, conversation: transcript, pullRequest: i.pull_request });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not save the brainstorm."),
     }),
     defineTool({
       name: "open_pull_request",
-      description: "Open a pull request that adds a document to its repository (README.md, .gitfill/docs or .gitfill/brainstorm). Returns the pull request link.",
+      description: "Open a pull request that adds a document to its repository (README.md, .gitfill/docs or .gitfill/knowledge). Returns the pull request link.",
       input: z.object({ document_id: z.string().uuid() }),
       run: async (i) =>
         act(async () => {
@@ -369,7 +392,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     client: new MuseClient(recorder.modelObserver()),
     model: modelFor("analyst"),
     purpose: "workspace_chat",
-    system: `${CHAT_SYSTEM_PROMPT}\n\n${describeWorkspace(workspace)}`,
+    system: `${CHAT_SYSTEM_PROMPT}\n\n${describeWorkspace(workspace)}\n\n${describeIntentRounds(history)}`,
     messages,
     tools,
     recorder,
@@ -395,6 +418,13 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
   const questions = result.questions ? formatQuestions({ intro: result.intro ?? "", questions: result.questions }) : "";
   const reply = [result.message, questions, answers.join("\n\n---\n\n")].filter(Boolean).join("\n\n");
   return { reply, jobIds };
+}
+
+function describeIntentRounds(history: Array<{ role: string; content: string; jobIds?: string[] }>): string {
+  const rounds = questionRounds(history);
+  return rounds >= INTENT_MAX_ROUNDS
+    ? `Intent rounds asked so far: ${rounds} of ${INTENT_MAX_ROUNDS}. The limit is reached: do not ask about the document again; start the job the user asked for with what you know and say which defaults you chose (a brainstorm may continue as plain discussion).`
+    : `Intent rounds asked so far: ${rounds} of ${INTENT_MAX_ROUNDS}.`;
 }
 
 /** Workspace contents for the system prompt, so the agent needs no lookup turn before acting. */

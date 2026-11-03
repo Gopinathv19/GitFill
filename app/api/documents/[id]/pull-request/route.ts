@@ -8,7 +8,7 @@ import { openPullRequest } from "@/lib/workspaces/actions";
 
 /**
  * POST /api/documents/:id/pull-request — opens a pull request that adds the document to the
- * repository: README.md, .gitfill/docs/ (with the index) or .gitfill/brainstorm/.
+ * repository: README.md, .gitfill/docs/ (with the index) or .gitfill/knowledge/ (with its index).
  */
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
