@@ -18,6 +18,8 @@ export const generateRequestSchema = z.object({
   /** Template id; empty means the deck type's suggested template. */
   theme: z.enum(THEMES).optional(),
   brand: brandSchema.optional(),
+  /** A tag, branch or commit to report changes since (release-notes material for stakeholder updates and "what's new" decks). */
+  changesSince: z.string().trim().min(1).max(200).optional(),
   /** Style the deck in the analyzed application's own colours and fonts (from its CSS, Tailwind config and .gitfill/assets/brand.json). Unset: yes unless a template was picked. */
   repoBrand: z.boolean().optional(),
   instructions: z.string().trim().max(2000).default(""),

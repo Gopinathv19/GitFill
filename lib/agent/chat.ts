@@ -60,6 +60,7 @@ ${describeTemplates()}
 - Unless the user already attached files, include one question with kind "upload" offering to take screenshots, a logo, a .pptx template (its colours and fonts become the deck's brand) or documents (product notes, results, roadmap); options name what would help this deck (e.g. "Screenshots of the dashboard").
 - Files the user attached appear in their messages as an \`attachments\` block with upload ids. Pass the ids of images and documents to use as asset_ids; a template's id too (its brand is applied).
 - Put must-cover topics and things to skip from the answers into must_cover and avoid, and everything else they told you into brief.
+- For a stakeholder update or a "what's new / since the last release" deck, ask (in a round you already run) which tag, branch or commit to report changes since, offering the real recent tags or branches you found, and pass it as changes_since. Without it, a stakeholder update shows the latest commits.
 
 READMEs
 - Unless the user already said how they want it, ask (one round, ask_user) which README template fits (options are the templates below, the one that suits the repository first, with the id in the option's detail), which sections to add or drop from it (multiple: true, name real parts of the repository), and offer an upload question (kind "upload") for screenshots or a logo. Templates: ${README_TEMPLATE_IDS.map((id) => `${id}: ${README_TEMPLATES[id].name} — ${README_TEMPLATES[id].description}`).join("; ")}.
@@ -263,6 +264,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         minutes: z.number().int().min(1).max(90).optional().describe("Talk length, when the user gave one; sets the slide count."),
         theme: z.enum(THEMES).optional().describe("Template id the user picked."),
         app_look: z.boolean().optional().describe("Use the app's own colours and fonts. Default: yes unless a template was picked."),
+        changes_since: z.string().min(1).max(200).optional().describe("Tag, branch or commit to report changes since (e.g. v1.2, last release), for stakeholder updates and what's-new decks."),
         brand_accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("Brand colour the user named, as #rrggbb."),
         logo_asset_id: z.string().uuid().optional().describe("Upload id of a logo image."),
         asset_ids: z.array(z.string().uuid()).max(30).optional().describe("Upload ids of screenshots, documents and templates to use."),
@@ -284,6 +286,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
             minutes: i.minutes,
             theme: i.theme,
             repoBrand: i.app_look,
+            changesSince: i.changes_since,
             brand,
             assetIds: i.asset_ids,
             mustCover: i.must_cover,
