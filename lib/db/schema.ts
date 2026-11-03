@@ -120,6 +120,7 @@ export const workspaceRepositories = pgTable(
     description: text("description"),
     owner: text("owner"),
     repositoryUrl: text("repository_url"),
+    /** The branch GitFill works on: GitHub's default at import, or the one the user picked. */
     defaultBranch: text("default_branch"),
     /** Private on GitHub: readable only through the owner's connected GitHub account. */
     isPrivate: boolean("is_private").notNull().default(false),

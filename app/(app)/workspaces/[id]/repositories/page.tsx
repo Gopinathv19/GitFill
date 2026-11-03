@@ -39,7 +39,7 @@ export default function WorkspaceRepositoriesPage({ params }: { params: Promise<
         <EmptyState icon={FolderGit2} title="No repositories yet" description="Import a GitHub repository, or create a new one inside this workspace." action={add} />
       ) : (
         <div className="space-y-2">
-          {data.repositories.map((r) => <RepoRow key={r.id} workspaceId={id} repo={r} onRemove={() => void remove(r.id, r.fullName)} />)}
+          {data.repositories.map((r) => <RepoRow key={r.id} workspaceId={id} repo={r} onRemove={() => void remove(r.id, r.fullName)} onChanged={reload} />)}
         </div>
       )}
     </div>

@@ -157,11 +157,11 @@ export async function listRepositoryCommits(db: Database, userId: string, worksp
   return { repository: `${ref.owner}/${ref.repo}`, branch: branch ?? repo.defaultBranch, commits };
 }
 
-/** Opens a workspace repository's code for read-only scouting (list, grep, read) by the chat agent. */
-export async function openWorkspaceRepository(db: Database, userId: string, workspaceId: string, repositoryId: string, recorder: MemoryRecorder) {
+/** Opens a workspace repository's code for read-only scouting (list, grep, read) by the chat agent: its working branch, or `branch`. */
+export async function openWorkspaceRepository(db: Database, userId: string, workspaceId: string, repositoryId: string, recorder: MemoryRecorder, branch?: string) {
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   const url = requireUrl(repo);
-  return openRepositorySource({ url, branch: repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), recorder });
+  return openRepositorySource({ url, branch: branch ?? repo.defaultBranch ?? undefined, client: await githubClientFor(db, userId), recorder });
 }
 
 /**

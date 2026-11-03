@@ -5,12 +5,28 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { RepoView } from "@/lib/client/types";
+import { BranchPicker } from "./branch-picker";
 import { CompareDialog } from "./compare-dialog";
 import { GenerateDialog } from "./generate-dialog";
 import { HandbookDialog } from "./handbook-dialog";
 import { ReadmeDialog } from "./readme-dialog";
 
-export function RepoRow({ workspaceId, repo, compact = false, onRemove, onStarted }: { workspaceId: string; repo: RepoView; compact?: boolean; onRemove?: () => void; onStarted?: (jobId: string) => void }) {
+export function RepoRow({
+  workspaceId,
+  repo,
+  compact = false,
+  onRemove,
+  onStarted,
+  onChanged,
+}: {
+  workspaceId: string;
+  repo: RepoView;
+  compact?: boolean;
+  onRemove?: () => void;
+  onStarted?: (jobId: string) => void;
+  /** Called after the user switches the repository's branch. */
+  onChanged?: () => void;
+}) {
   return (
     <div id={repo.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
       <div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">
@@ -20,7 +36,7 @@ export function RepoRow({ workspaceId, repo, compact = false, onRemove, onStarte
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{repo.fullName}</span>
           {repo.isPrivate && <Badge variant="outline" title="Private repository, read with your GitHub account"><Lock className="size-3" />Private</Badge>}
-          {repo.source === "created" ? <Badge variant="warning">Draft</Badge> : !compact && repo.defaultBranch && <Badge variant="outline">{repo.defaultBranch}</Badge>}
+          {repo.source === "created" ? <Badge variant="warning">Draft</Badge> : <BranchPicker workspaceId={workspaceId} repo={repo} onChanged={onChanged} className="rounded-md border text-xs" />}
         </div>
         {!compact && <p className="truncate text-xs text-muted-foreground">{repo.description || (repo.source === "created" ? "Created in this workspace" : "Imported from GitHub")}</p>}
       </div>

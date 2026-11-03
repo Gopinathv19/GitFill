@@ -171,6 +171,12 @@ export class GitHubClient {
     return { id: data.id, login: data.login, name: data.name, email: data.email, avatarUrl: data.avatar_url, scopes };
   }
 
+  /** Branch names, up to 100 (GitHub's page size), in GitHub's order. */
+  async listBranches(owner: string, repo: string): Promise<string[]> {
+    const data = await this.json<Array<{ name: string }>>(this.api(`/repos/${seg(owner)}/${seg(repo)}/branches?per_page=100`));
+    return data.map((b) => b.name);
+  }
+
   /** Recent commits on a branch (or from a SHA), newest first. */
   async listCommits(owner: string, repo: string, ref: string | undefined, perPage = 30): Promise<CommitInfo[]> {
     if (ref && !isValidBranchName(ref)) throw new GitHubError(`Invalid ref "${ref}".`, 400, "upstream");

@@ -28,7 +28,7 @@ export function WorkspacePanel({ data, reload, onActivity, onClose }: { data: Wo
             <AddRepositoryDialog workspaceId={data.id} onAdded={reload} trigger={<Button variant="ghost" size="icon" className="size-7" aria-label="Add repository"><Plus /></Button>} />
           </div>
           {data.repositories.length === 0 && <p className="text-sm text-muted-foreground">No repositories yet. Add one to start.</p>}
-          {data.repositories.map((r) => <RepoRow key={r.id} workspaceId={data.id} repo={r} compact onStarted={onActivity} />)}
+          {data.repositories.map((r) => <RepoRow key={r.id} workspaceId={data.id} repo={r} compact onStarted={onActivity} onChanged={reload} />)}
         </section>
         <section className="space-y-2">
           <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Documents</h2>

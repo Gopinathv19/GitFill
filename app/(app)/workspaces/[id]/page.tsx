@@ -12,6 +12,7 @@ import { AddRepositoryDialog } from "@/components/workspace/add-repository-dialo
 import { api, errorMessage } from "@/lib/client/api";
 import { refreshSessions, setPendingMessage, useSessions } from "@/lib/client/sessions-store";
 import type { ChatSession } from "@/lib/client/types";
+import { BranchPicker } from "@/components/workspace/branch-picker";
 import { useWorkspace } from "@/lib/client/use-workspace";
 import { refreshWorkspaces, useWorkspaces } from "@/lib/client/workspaces-store";
 import { timeAgo } from "@/lib/utils";
@@ -127,11 +128,13 @@ export default function NewSessionPage({ params }: { params: Promise<{ id: strin
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 pb-1 pt-2 text-xs text-muted-foreground">
               {!data && <span>Loading repositories…</span>}
               {data?.repositories.map((r) => (
-                <Link key={r.id} href={`/workspaces/${id}/repositories#${r.id}`} className="inline-flex items-center gap-1 hover:text-foreground">
-                  {r.source === "created" ? <Sparkles className="size-3.5" /> : <GitBranch className="size-3.5" />}
-                  {r.fullName}
-                  {r.defaultBranch && <span className="text-muted-foreground/70">({r.defaultBranch})</span>}
-                </Link>
+                <span key={r.id} className="inline-flex items-center gap-1">
+                  <Link href={`/workspaces/${id}/repositories#${r.id}`} className="inline-flex items-center gap-1 hover:text-foreground">
+                    {r.source === "created" ? <Sparkles className="size-3.5" /> : <GitBranch className="size-3.5" />}
+                    {r.fullName}
+                  </Link>
+                  <BranchPicker workspaceId={id} repo={r} onChanged={reload} />
+                </span>
               ))}
               {data && (
                 <AddRepositoryDialog

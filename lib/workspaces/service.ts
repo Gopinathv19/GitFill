@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { githubClientFor } from "@/lib/auth/github-token";
-import { canonicalRepoUrl, parseGitHubUrl } from "@/lib/connectors/github/url";
+import { canonicalRepoUrl, isValidBranchName, parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
 import { artifacts, chatMessages, chatSessions, deckVersions, decks, documents, generationJobs, projects, workspaceRepositories, workspaces } from "@/lib/db/schema";
 import { ConflictError, NotFoundError } from "@/lib/http";
@@ -22,12 +22,42 @@ export const addRepositorySchema = z.discriminatedUnion("mode", [
   }),
 ]);
 
-/** Resolves a GitHub URL to canonical repository metadata as the user (their token sees their private repositories). */
+/**
+ * Resolves a GitHub URL to canonical repository metadata as the user (their token sees their private
+ * repositories). A /tree/<branch> URL sets the branch GitFill works on; otherwise it is GitHub's default.
+ */
 async function lookupRepository(db: Database, userId: string, url: string) {
   const ref = parseGitHubUrl(url);
-  const info = await (await githubClientFor(db, userId)).getRepo(ref.owner, ref.repo);
+  const client = await githubClientFor(db, userId);
+  const info = await client.getRepo(ref.owner, ref.repo);
   const [owner, name] = info.fullName.split("/");
-  return { owner: owner!, name: name!, repositoryUrl: canonicalRepoUrl({ owner: owner!, repo: name! }), defaultBranch: info.defaultBranch, description: info.description, isPrivate: info.private };
+  if (ref.branch) await client.getCommit(owner!, name!, ref.branch);
+  return { owner: owner!, name: name!, repositoryUrl: canonicalRepoUrl({ owner: owner!, repo: name! }), defaultBranch: ref.branch ?? info.defaultBranch, description: info.description, isPrivate: info.private };
+}
+
+/** The repository's branches on GitHub, with the one GitFill works on first. */
+export async function listRepositoryBranches(db: Database, userId: string, workspaceId: string, repositoryId: string) {
+  const repo = await getRepository(db, userId, workspaceId, repositoryId);
+  if (!repo.repositoryUrl) throw new ConflictError(`"${repo.name}" has no code on GitHub yet.`);
+  const ref = parseGitHubUrl(repo.repositoryUrl);
+  const names = await (await githubClientFor(db, userId)).listBranches(ref.owner, ref.repo);
+  const current = repo.defaultBranch;
+  return { current, branches: current ? [current, ...names.filter((n) => n !== current)] : names };
+}
+
+/**
+ * Switches the branch GitFill works on for a repository: questions, handbooks, decks, READMEs and
+ * brainstorms all read its latest commit. The branch must exist on GitHub. Documents already made
+ * keep the commit they were written from.
+ */
+export async function setRepositoryBranch(db: Database, userId: string, workspaceId: string, repositoryId: string, branch: string) {
+  const repo = await getRepository(db, userId, workspaceId, repositoryId);
+  if (!repo.repositoryUrl) throw new ConflictError(`"${repo.name}" has no code on GitHub yet.`);
+  if (!isValidBranchName(branch)) throw new ConflictError(`"${branch}" is not a valid branch name.`);
+  const ref = parseGitHubUrl(repo.repositoryUrl);
+  await (await githubClientFor(db, userId)).getCommit(ref.owner, ref.repo, branch);
+  const [row] = await db.update(workspaceRepositories).set({ defaultBranch: branch }).where(eq(workspaceRepositories.id, repo.id)).returning();
+  return repoView(row!);
 }
 
 export async function listWorkspaces(db: Database, userId: string) {

@@ -18,7 +18,10 @@ async function main() {
 
   while (!stopping) {
     const job = await claimNextJob(db).catch((err) => {
-      console.error("[worker] poll failed:", err instanceof Error ? err.message : err);
+      // Drizzle's message is only the SQL; the database or network error is its cause.
+      const cause = err instanceof Error && err.cause instanceof Error ? err.cause : null;
+      const code = (cause as { code?: string } | null)?.code;
+      console.error("[worker] poll failed:", cause ? `${cause.message}${code ? ` (${code})` : ""}` : err instanceof Error ? err.message : err);
       return undefined;
     });
     if (!job) {

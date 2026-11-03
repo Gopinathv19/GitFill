@@ -75,6 +75,7 @@ Repositories can have a .gitfill folder: .gitfill/assets (screenshots, logo, bra
 Rules:
 - Only start background work when the user clearly asks for it. If the request is ambiguous (several repositories and none named, missing commit refs), ask a short question instead.
 - Start only the kind of work the user asked for. If a start_* tool returns an error, tell the user what failed in your reply; never start a different kind of job (e.g. a presentation instead of a video) as a substitute unless they ask.
+- Each repository is read at its working branch (in the workspace listing; the user switches it from the branch menu next to the repository). When the user names another branch, tag or commit for a request ("on the dev branch", "at v2.1"), pass it as branch to the scouting tools and to the job; never switch to a branch they did not name.
 - Use the exact ids from the workspace listing. Never invent ids, repositories, commits or results.
 - Background jobs show progress below your message; do not claim they are finished.
 - For questions about the code, prefer ask_codebase over guessing. Never answer code questions from memory.
@@ -90,6 +91,14 @@ const EMPTY_SOURCE: CodeSource = {
   grep: async () => ({ hits: [], truncated: false }),
   read: async () => null,
 };
+
+const BRANCH = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .optional()
+  .describe("Only when the user named a branch, tag or commit for this request; otherwise the repository's working branch from the workspace listing is used.");
 
 const BRIEF = z
   .string()
@@ -132,12 +141,13 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
 
   // Repositories opened for scouting in this turn, by id; opened lazily on first use.
   const sources = new Map<string, Promise<CodeSource>>();
-  const sourceFor = (repositoryId: string) => {
-    let source = sources.get(repositoryId);
+  const sourceFor = (repositoryId: string, branch?: string) => {
+    const key = `${repositoryId}@${branch ?? ""}`;
+    let source = sources.get(key);
     if (!source) {
-      source = openWorkspaceRepository(db, userId, workspaceId, repositoryId, recorder);
-      source.catch(() => sources.delete(repositoryId));
-      sources.set(repositoryId, source);
+      source = openWorkspaceRepository(db, userId, workspaceId, repositoryId, recorder, branch);
+      source.catch(() => sources.delete(key));
+      sources.set(key, source);
     }
     return source;
   };
@@ -148,10 +158,10 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
       defineTool({
         name: t.name,
         description: `${t.description} Read-only; for scouting a repository before asking the user about a document.`,
-        input: (t.input as z.ZodObject).extend({ repository_id: z.string().uuid() }),
-        run: async ({ repository_id, ...args }: { repository_id: string } & Record<string, unknown>) =>
+        input: (t.input as z.ZodObject).extend({ repository_id: z.string().uuid(), branch: BRANCH }),
+        run: async ({ repository_id, branch, ...args }: { repository_id: string; branch?: string } & Record<string, unknown>) =>
           act(async () => {
-            const source = await sourceFor(repository_id);
+            const source = await sourceFor(repository_id, branch);
             const tool = createSearchTools(source).find((x) => x.name === t.name)!;
             return tool.run(tool.input.parse(args));
           }, "Could not read the repository."),
@@ -170,10 +180,10 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     defineTool({
       name: "app_look",
       description: "Read the repository's own look: brand colours, background, text colour and fonts from .gitfill/assets/brand.json, its stylesheets' CSS variables, its Tailwind config and the fonts it loads, with where each came from and what is missing.",
-      input: z.object({ repository_id: z.string().uuid() }),
+      input: z.object({ repository_id: z.string().uuid(), branch: BRANCH }),
       run: async (i) =>
         act(async () => {
-          const found = await readRepoBrandFromSource(await sourceFor(i.repository_id));
+          const found = await readRepoBrandFromSource(await sourceFor(i.repository_id, i.branch));
           return { ...found, summary: describeRepoBrand(found) };
         }, "Could not read the repository's look."),
     }),
@@ -183,11 +193,12 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
       input: z.object({
         repository_id: z.string().uuid(),
         question: z.string().min(3).max(4000),
+        branch: BRANCH,
         diagram: z.enum(["auto", "flowchart", "sequence", "class", "er", "component", "dependency", "none"]).default("auto"),
       }),
       run: async (i) =>
         act(async () => {
-          const result = await askRepository(db, userId, workspaceId, i.repository_id, { question: i.question, diagram: i.diagram }, { save: false, recorder });
+          const result = await askRepository(db, userId, workspaceId, i.repository_id, { question: i.question, diagram: i.diagram, ...(i.branch ? { branch: i.branch } : {}) }, { save: false, recorder });
           attachments.push(result.markdown);
           return { attached: true, title: result.title, repository: result.repository, commit: result.commitSha.slice(0, 7), unverified: result.unverified.length };
         }, "Could not answer the question."),
@@ -204,10 +215,11 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         focus: z.string().max(400).optional().describe("Directory path for module scope, or a feature description."),
         instructions: z.string().max(2000).optional(),
         brief: BRIEF,
+        branch: BRANCH,
       }),
       run: async (i) =>
         act(async () => {
-          const { job, repo } = await startHandbook(db, userId, workspaceId, i.repository_id, { audience: i.audience, scope: i.scope, focus: i.focus ?? "", instructions: i.instructions ?? "", brief: i.brief ?? "" });
+          const { job, repo } = await startHandbook(db, userId, workspaceId, i.repository_id, { branch: i.branch, audience: i.audience, scope: i.scope, focus: i.focus ?? "", instructions: i.instructions ?? "", brief: i.brief ?? "" });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not start the handbook."),
@@ -258,11 +270,13 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         avoid: z.array(z.string().min(1).max(200)).max(12).optional(),
         instructions: z.string().max(2000).optional(),
         brief: BRIEF,
+        branch: BRANCH,
       }),
       run: async (i) =>
         act(async () => {
           const brand = i.brand_accent || i.logo_asset_id ? { ...(i.brand_accent ? { accent: i.brand_accent } : {}), ...(i.logo_asset_id ? { logoAssetId: i.logo_asset_id } : {}) } : undefined;
           const { job, repo } = await startPresentation(db, userId, workspaceId, i.repository_id, {
+            branch: i.branch,
             deckType: i.deck_type,
             audience: i.audience,
             purpose: i.purpose,
@@ -302,11 +316,13 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         reference: z.string().max(20_000).optional().describe("A README the user pasted to follow for structure and style."),
         answers: z.string().max(4000).optional().describe("The user's answers to your questions, in their words."),
         instructions: z.string().max(2000).optional().describe("What the user wants from the README, in their words."),
+        branch: BRANCH,
       }),
       run: async (i) =>
         act(async () => {
           const style = Object.fromEntries(Object.entries({ banner: i.banner, diagrams: i.diagrams, badges: i.badges }).filter(([, v]) => v !== undefined));
           const { job, repo } = await startReadme(db, userId, workspaceId, i.repository_id, {
+            branch: i.branch,
             instructions: i.instructions ?? "",
             template: i.template,
             sections: i.sections,
@@ -329,6 +345,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         repository_id: z.string().uuid(),
         title: z.string().min(3).max(100).describe("Short name of the idea."),
         pull_request: z.boolean().default(false).describe("True when the user wants the spec in the repository's .gitfill/knowledge folder."),
+        branch: BRANCH,
       }),
       run: async (i) =>
         act(async () => {
@@ -337,7 +354,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
             .map((m) => `${m.role === "user" ? "User" : "GitFill"}: ${m.content}`)
             .join("\n\n")
             .slice(-60_000);
-          const { job, repo } = await startBrainstorm(db, userId, workspaceId, i.repository_id, { title: i.title, conversation: transcript, pullRequest: i.pull_request });
+          const { job, repo } = await startBrainstorm(db, userId, workspaceId, i.repository_id, { title: i.title, conversation: transcript, pullRequest: i.pull_request, branch: i.branch });
           jobIds.push(job.id);
           return { jobId: job.id, repository: repo.name, status: "queued" };
         }, "Could not save the brainstorm."),
@@ -429,7 +446,7 @@ function describeIntentRounds(history: Array<{ role: string; content: string; jo
 
 /** Workspace contents for the system prompt, so the agent needs no lookup turn before acting. */
 function describeWorkspace(ws: Awaited<ReturnType<typeof getWorkspace>>): string {
-  const repos = ws.repositories.map((r) => `- ${r.fullName} — id ${r.id}, default branch ${r.defaultBranch ?? "unknown"}, ${r.source}${r.analyzable ? "" : ", not analyzable"}`);
+  const repos = ws.repositories.map((r) => `- ${r.fullName} — id ${r.id}, working branch ${r.defaultBranch ?? "unknown"}, ${r.source}${r.analyzable ? "" : ", not analyzable"}`);
   const docs = ws.documents.map((d) => `- ${d.kind}: ${d.title} — id ${d.id}${d.repository ? `, ${d.repository}` : ""}`);
   const decks = ws.presentations.map((p) => `- ${p.title} — id ${p.id}, version ${p.latestVersion}`);
   return [
