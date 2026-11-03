@@ -46,9 +46,9 @@ export const Markdown = memo(function Markdown({ children, className, evidence }
 });
 
 const CHIP_TONE: Record<EvidenceStatus, string> = {
-  verified: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-400",
-  inferred: "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-400",
-  unverified: "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-400",
+  verified: "border-success/30 bg-success/10 text-success",
+  inferred: "border-warning/30 bg-warning/10 text-warning",
+  unverified: "border-destructive/30 bg-destructive/5 text-destructive",
 };
 
 function MarkdownBlock({ children, evidence, resolveImage }: { children: string; evidence?: EvidenceChips; resolveImage?: (src: string) => string }) {
@@ -106,9 +106,9 @@ function MarkdownBlock({ children, evidence, resolveImage }: { children: string;
 
 function DiagramFallback({ chart, className, reason }: { chart: string; className?: string; reason?: string | null }) {
   return (
-    <div className={cn("rounded-md border border-amber-300/60 bg-amber-50 p-3 text-xs dark:bg-amber-950/30", className)}>
-      <p className="font-medium text-amber-700 dark:text-amber-400">Diagram could not be rendered.</p>
-      {reason ? <p className="mt-1 text-amber-700/80 dark:text-amber-400/80">{reason}</p> : null}
+    <div className={cn("rounded-md border border-warning/30 bg-warning/5 p-3 text-xs", className)}>
+      <p className="font-medium text-warning">Diagram could not be rendered.</p>
+      {reason ? <p className="mt-1 text-muted-foreground">{reason}</p> : null}
       <pre className="mt-2 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
     </div>
   );
@@ -206,11 +206,11 @@ export function Mermaid({ chart, className }: { chart: string; className?: strin
 }
 
 const ALERT_STYLE: Record<string, { label: string; tone: string }> = {
-  NOTE: { label: "Note", tone: "border-sky-500 text-sky-700 dark:text-sky-400" },
-  TIP: { label: "Tip", tone: "border-emerald-500 text-emerald-700 dark:text-emerald-400" },
-  IMPORTANT: { label: "Important", tone: "border-violet-500 text-violet-700 dark:text-violet-400" },
-  WARNING: { label: "Warning", tone: "border-amber-500 text-amber-700 dark:text-amber-400" },
-  CAUTION: { label: "Caution", tone: "border-rose-500 text-rose-700 dark:text-rose-400" },
+  NOTE: { label: "Note", tone: "border-brand text-brand" },
+  TIP: { label: "Tip", tone: "border-brand text-brand" },
+  IMPORTANT: { label: "Important", tone: "border-brand text-brand" },
+  WARNING: { label: "Warning", tone: "border-warning text-warning" },
+  CAUTION: { label: "Caution", tone: "border-destructive text-destructive" },
 };
 
 type ReadmeSegment = { kind: "md" | "center"; md: string } | { kind: "alert"; type: string; md: string };

@@ -121,7 +121,7 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
       <div className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
         {/* The product area. GitFill starts with Main; more areas join it here later. */}
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gradient-to-br from-emerald-600 to-teal-400 text-white shadow-sm" aria-hidden>
+          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm" aria-hidden>
             <GitBranch className="size-3.5" />
           </span>
           <span className="truncate text-sm font-semibold">Main</span>
@@ -154,7 +154,7 @@ function AccountMenu({ user, stub }: { user: SessionUser; stub: boolean }) {
             <AvatarFallback className="rounded-md border bg-background text-[10px] font-semibold text-foreground">{getInitials(name)}</AvatarFallback>
           </Avatar>
           <span className="truncate text-sm font-semibold">{name}</span>
-          {stub && <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-1.5 text-[10px] font-medium text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400">demo</span>}
+          {stub && <span className="shrink-0 rounded-full border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">demo</span>}
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>

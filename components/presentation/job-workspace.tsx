@@ -84,8 +84,8 @@ export function JobWorkspace({ jobId }: { jobId: string }) {
               key={stage}
               className={cn(
                 "flex items-center gap-1.5 rounded-md border px-3 py-2 text-xs",
-                done && "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400",
-                active && "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-400",
+                done && "border-success/25 bg-success/10 text-success",
+                active && "border-brand/40 bg-brand/5 text-brand",
                 !done && !active && "text-muted-foreground",
               )}
             >

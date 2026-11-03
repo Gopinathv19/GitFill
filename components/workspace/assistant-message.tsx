@@ -9,9 +9,9 @@ import { cn } from "@/lib/utils";
 import { QuestionCard } from "./question-card";
 
 const STATUS: Record<EvidenceStatus, { label: string; icon: typeof CircleCheck; tone: string }> = {
-  verified: { label: "Verified", icon: CircleCheck, tone: "text-emerald-600 dark:text-emerald-400" },
-  inferred: { label: "Inferred", icon: CircleHelp, tone: "text-amber-600 dark:text-amber-400" },
-  unverified: { label: "Unverified", icon: CircleX, tone: "text-rose-600 dark:text-rose-400" },
+  verified: { label: "Verified", icon: CircleCheck, tone: "text-success" },
+  inferred: { label: "Inferred", icon: CircleHelp, tone: "text-warning" },
+  unverified: { label: "Unverified", icon: CircleX, tone: "text-destructive" },
 };
 
 /**

@@ -15,12 +15,15 @@ import { cn, timeAgo } from "@/lib/utils";
 type Job = Recent["jobs"][number];
 type Filter = "all" | "running" | "completed" | "failed";
 
+/** Kinds are told apart by their icon; every tile uses the brand tone. */
+const KIND_TONE = "bg-brand/10 text-brand";
+
 const KIND: Record<string, { icon: typeof BookOpen; tone: string }> = {
-  generate: { icon: Presentation, tone: "bg-teal-500/10 text-teal-700 dark:text-teal-400" },
-  revise: { icon: PenLine, tone: "bg-amber-500/10 text-amber-700 dark:text-amber-400" },
-  handbook: { icon: BookOpen, tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
-  compare: { icon: GitCompareArrows, tone: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },
-  reuse: { icon: FileSearch, tone: "bg-violet-500/10 text-violet-700 dark:text-violet-400" },
+  generate: { icon: Presentation, tone: KIND_TONE },
+  revise: { icon: PenLine, tone: KIND_TONE },
+  handbook: { icon: BookOpen, tone: KIND_TONE },
+  compare: { icon: GitCompareArrows, tone: KIND_TONE },
+  reuse: { icon: FileSearch, tone: KIND_TONE },
 };
 
 const stateOf = (j: Job): Exclude<Filter, "all"> => (j.status === "completed" ? "completed" : j.status === "failed" ? "failed" : "running");
@@ -101,7 +104,7 @@ export default function ActivityPage() {
                   onClick={() => setFilter(f)}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm capitalize transition-colors",
-                    filter === f ? "border-foreground bg-foreground text-background" : "bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                    filter === f ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
                   )}
                 >
                   {f}
@@ -141,10 +144,10 @@ function Tile({ label, value, note, tone }: { label: string; value: number; note
   return (
     <Card className="px-4 py-3">
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        {tone === "live" ? <span className="size-1.5 animate-pulse rounded-full bg-sky-500" /> : null}
+        {tone === "live" ? <span className="size-1.5 animate-pulse rounded-full bg-brand" /> : null}
         {label}
       </p>
-      <p className={cn("mt-1 text-2xl font-semibold tabular-nums", tone === "ok" && "text-emerald-600", tone === "bad" && "text-destructive", tone === "live" && "text-sky-600")}>{value}</p>
+      <p className={cn("mt-1 text-2xl font-semibold tabular-nums", tone === "ok" && "text-success", tone === "bad" && "text-destructive", tone === "live" && "text-brand")}>{value}</p>
       {note ? <p className="text-[11px] text-muted-foreground">{note}</p> : null}
     </Card>
   );
@@ -161,12 +164,12 @@ function JobCard({ job: j, preview }: { job: Job; preview: string | null }) {
     <li className="relative pl-8">
       <span className="absolute left-0 top-6 grid w-5 place-items-center">
         {state === "running" ? (
-          <Loader2 className="size-4 animate-spin text-sky-500" />
+          <Loader2 className="size-4 animate-spin text-brand" />
         ) : (
-          <span className={cn("block size-2.5 rounded-full ring-4 ring-background", state === "failed" ? "bg-destructive" : "bg-emerald-500")} />
+          <span className={cn("block size-2.5 rounded-full ring-4 ring-background", state === "failed" ? "bg-destructive" : "bg-success")} />
         )}
       </span>
-      <Card className={cn("group relative flex items-stretch gap-4 p-4 transition-colors hover:border-foreground/25", state === "running" && "border-sky-300/70 dark:border-sky-800")}>
+      <Card className={cn("group relative flex items-stretch gap-4 p-4 transition-colors hover:border-foreground/25", state === "running" && "border-brand/40")}>
         {/* The whole card opens the job; the result button sits above this link. */}
         <Link href={`/jobs/${j.id}`} className="absolute inset-0 rounded-[inherit]" aria-label={`Open job: ${JOB_KIND_LABELS[j.kind] ?? j.kind} for ${repoName(j.repositoryUrl)}`} />
         <div className={cn("grid size-10 shrink-0 place-items-center rounded-lg", kind.tone)}>

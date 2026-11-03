@@ -1,61 +1,73 @@
 @import "tailwindcss";
 
-/* Design tokens match SysOne (shadcn slate). Light by default, `.dark` on <html> for dark. */
+/* Design tokens: neutral greys for surfaces and text, one brand colour (GitFill's emerald → teal) for
+   actions, focus, progress and success, plus warning (amber) and destructive (red) for states only.
+   Components use these tokens, never raw palette colours. Light by default, `.dark` on <html> for dark. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
+  --foreground: 0 0% 3.9%;
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
+  --card-foreground: 0 0% 3.9%;
   --popover: 0 0% 100%;
-  --popover-foreground: 222.2 84% 4.9%;
-  --primary: 222.2 47.4% 11.2%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 210 40% 96.1%;
-  --secondary-foreground: 222.2 47.4% 11.2%;
-  --muted: 210 40% 96.1%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --accent: 210 40% 96.1%;
-  --accent-foreground: 222.2 47.4% 11.2%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 222.2 84% 4.9%;
+  --popover-foreground: 0 0% 3.9%;
+  --primary: 161 94% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96.1%;
+  --secondary-foreground: 0 0% 9%;
+  --muted: 0 0% 96.1%;
+  --muted-foreground: 0 0% 42%;
+  --accent: 0 0% 94%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --brand: 161 94% 30%;
+  --brand-2: 172 66% 50%;
+  --brand-foreground: 0 0% 100%;
+  --success: 161 94% 30%;
+  --warning: 32 95% 44%;
+  --border: 0 0% 89.8%;
+  --input: 0 0% 89.8%;
+  --ring: 161 94% 30%;
   --radius: 0.625rem;
   --sidebar: 0 0% 98%;
-  --sidebar-foreground: 240 5.3% 26.1%;
-  --sidebar-accent: 240 4.8% 95.9%;
-  --sidebar-border: 220 13% 91%;
-  --dot: 214.3 31.8% 86%;
+  --sidebar-foreground: 0 0% 25%;
+  --sidebar-accent: 0 0% 94%;
+  --sidebar-border: 0 0% 90%;
+  --dot: 0 0% 86%;
 }
 
 .dark {
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222.2 84% 4.9%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 98%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 217.2 32.6% 17.5%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --accent: 217.2 32.6% 17.5%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217.2 32.6% 17.5%;
-  --input: 217.2 32.6% 17.5%;
-  --ring: 212.7 26.8% 83.9%;
-  --sidebar: 240 5.9% 10%;
-  --sidebar-foreground: 240 4.8% 95.9%;
-  --sidebar-accent: 240 3.7% 15.9%;
-  --sidebar-border: 240 3.7% 15.9%;
-  --dot: 217.2 32.6% 20%;
+  --background: 0 0% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 6%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 158 64% 52%;
+  --primary-foreground: 161 94% 8%;
+  --secondary: 0 0% 14.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 14.9%;
+  --muted-foreground: 0 0% 64%;
+  --accent: 0 0% 16%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62% 50%;
+  --destructive-foreground: 0 0% 98%;
+  --brand: 158 64% 52%;
+  --brand-2: 172 66% 50%;
+  --brand-foreground: 161 94% 8%;
+  --success: 158 64% 52%;
+  --warning: 43 96% 56%;
+  --border: 0 0% 16%;
+  --input: 0 0% 16%;
+  --ring: 158 64% 52%;
+  --sidebar: 0 0% 6%;
+  --sidebar-foreground: 0 0% 95%;
+  --sidebar-accent: 0 0% 14.9%;
+  --sidebar-border: 0 0% 14.9%;
+  --dot: 0 0% 18%;
 }
 
 @theme inline {
@@ -75,6 +87,11 @@
   --color-accent-foreground: hsl(var(--accent-foreground));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-brand: hsl(var(--brand));
+  --color-brand-2: hsl(var(--brand-2));
+  --color-brand-foreground: hsl(var(--brand-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
@@ -123,8 +140,8 @@
 .gf-prose ol { list-style: decimal; }
 .gf-prose li { margin: 0.2em 0; }
 .gf-prose li > ul, .gf-prose li > ol { margin-top: 0.2em; margin-bottom: 0.2em; }
-.gf-prose a { color: hsl(222 70% 45%); text-decoration: underline; text-underline-offset: 2px; }
-.dark .gf-prose a { color: hsl(213 90% 72%); }
+.gf-prose a { color: hsl(var(--brand)); text-decoration: underline; text-decoration-color: hsl(var(--brand) / 0.4); text-underline-offset: 2px; }
+.gf-prose a:hover { text-decoration-color: hsl(var(--brand)); }
 .gf-prose code { font-family: var(--font-mono); font-size: 0.82em; background: hsl(var(--muted)); border-radius: 4px; padding: 0.12em 0.35em; }
 .gf-prose pre { background: hsl(var(--muted)); border: 1px solid hsl(var(--border)); border-radius: var(--radius-md); padding: 0.8em 1em; overflow-x: auto; margin: 0.8em 0; font-size: 0.8rem; line-height: 1.5; }
 .gf-prose pre code { background: transparent; padding: 0; font-size: inherit; }

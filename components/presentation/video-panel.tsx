@@ -169,10 +169,10 @@ function LiveVideo({ job, now, onDismiss }: { job: NonNullable<ReturnType<typeof
 
   return (
     <div>
-      <div className="flex items-center gap-2 border-b bg-sky-50 px-4 py-2 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+      <div className="flex items-center gap-2 border-b bg-brand/5 px-4 py-2 text-xs text-brand">
         {running ? <Loader2 className="size-3.5 animate-spin" /> : null}
         <span className="font-medium">{STAGE_LABELS[job.status] ?? job.status}</span>
-        <span className="text-sky-700/80 dark:text-sky-400/80">
+        <span className="text-muted-foreground">
           · {elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, "0")}s`}
           {job.status === "rendering_video" ? " · rendering every frame and the soundtrack" : stills.length ? ` · ${stills.length} frames previewed` : " · researching and writing the scenes"}
         </span>

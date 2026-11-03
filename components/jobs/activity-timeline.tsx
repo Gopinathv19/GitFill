@@ -206,12 +206,12 @@ function buildRows(events: JobEvent[]): Row[] {
 
 /** Status dot on the timeline rail. */
 function Dot({ status, muted = false }: { status: JobEvent["status"] | "mixed"; muted?: boolean }) {
-  if (status === "started") return <Loader2 className="size-3.5 animate-spin text-sky-500" />;
+  if (status === "started") return <Loader2 className="size-3.5 animate-spin text-brand" />;
   return (
     <span
       className={cn(
         "block size-2.5 rounded-full ring-4 ring-background",
-        muted ? "bg-muted-foreground/40" : status === "failed" ? "bg-destructive" : status === "mixed" ? "bg-amber-500" : "bg-emerald-500",
+        muted ? "bg-muted-foreground/40" : status === "failed" ? "bg-destructive" : status === "mixed" ? "bg-warning" : "bg-success",
       )}
     />
   );
@@ -291,7 +291,7 @@ export function ActivityTimeline({ events, running, currentStage }: { events: Jo
   if (!rows.length) {
     return (
       <ol className="relative space-y-1 before:absolute before:bottom-2 before:left-[0.53rem] before:top-2 before:w-px before:bg-border">
-        <Item dot={<Loader2 className="size-3.5 animate-spin text-sky-500" />} title="Waiting for the worker to pick up this job…" muted />
+        <Item dot={<Loader2 className="size-3.5 animate-spin text-brand" />} title="Waiting for the worker to pick up this job…" muted />
       </ol>
     );
   }
@@ -353,7 +353,7 @@ export function ActivityTimeline({ events, running, currentStage }: { events: Jo
                 {r.items.map((e) => (
                   <li key={e.id}>
                     <button type="button" onClick={() => toggle(e.id)} className="flex w-full items-start gap-2 text-left text-[13px]">
-                      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", e.status === "failed" ? "bg-destructive" : e.status === "started" ? "bg-sky-500" : "bg-emerald-500")} />
+                      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", e.status === "failed" ? "bg-destructive" : e.status === "started" ? "bg-brand" : "bg-success")} />
                       <span className="min-w-0 flex-1 truncate text-muted-foreground hover:text-foreground">{describe(e) || TITLES[e.name] || humanize(e.name)}</span>
                       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{seconds(e.durationMs)}</span>
                     </button>
@@ -380,7 +380,7 @@ export function ActivityTimeline({ events, running, currentStage }: { events: Jo
           </Item>
         );
       })}
-      {running ? <Item dot={<Loader2 className="size-3.5 animate-spin text-sky-500" />} title={`${currentStage ?? "Working"}…`} muted /> : null}
+      {running ? <Item dot={<Loader2 className="size-3.5 animate-spin text-brand" />} title={`${currentStage ?? "Working"}…`} muted /> : null}
     </ol>
   );
 }

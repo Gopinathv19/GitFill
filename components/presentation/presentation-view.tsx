@@ -219,10 +219,10 @@ export function PresentationView({ deckId }: { deckId: string }) {
 
       <Card className="overflow-hidden">
         {running && live ? (
-          <div className="flex items-center gap-2 border-b bg-sky-50 px-4 py-2 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-300">
+          <div className="flex items-center gap-2 border-b bg-brand/5 px-4 py-2 text-xs text-brand">
             <Loader2 className="size-3.5 animate-spin" />
             <span className="font-medium">Revising live</span>
-            <span className="text-sky-700/80 dark:text-sky-400/80">
+            <span className="text-muted-foreground">
               · {STAGE_LABELS[live.status] ?? live.status}
               {progress?.render ? ` · showing render round ${progress.render.round + 1}` : progress?.busy.size ? ` · rewriting ${progress.busy.size} slide${progress.busy.size === 1 ? "" : "s"}` : ""}
             </span>
@@ -262,7 +262,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
               className={cx(
                 "relative shrink-0 overflow-hidden rounded-md border-2 transition-opacity",
                 i === index ? "border-primary" : "border-transparent opacity-60 hover:opacity-100",
-                busy(f.slideId) && "border-sky-500 opacity-100",
+                busy(f.slideId) && "border-brand opacity-100",
               )}
               aria-label={`Show slide ${i + 1}${busy(f.slideId) ? " (being rewritten)" : ""}`}
               aria-current={i === index}
@@ -396,7 +396,7 @@ function ValidationPanel({ validation, slides, onSlide }: { validation: Validati
 function Stat({ label, value, tone }: { label: string; value: number; tone?: "warning" | "success" }) {
   return (
     <div className="rounded-lg bg-muted px-3 py-2.5">
-      <div className={cx("text-lg font-semibold", tone === "warning" && "text-amber-600", tone === "success" && "text-emerald-600")}>{value}</div>
+      <div className={cx("text-lg font-semibold", tone === "warning" && "text-warning", tone === "success" && "text-success")}>{value}</div>
       <div className="text-[11px] text-muted-foreground">{label}</div>
     </div>
   );

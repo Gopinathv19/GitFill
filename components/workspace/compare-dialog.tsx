@@ -78,7 +78,7 @@ export function CompareDialog({ workspaceId, repo, trigger, onStarted }: { works
               {!commits && !error && <p className="p-3 text-muted-foreground">Loading commits…</p>}
               {commits?.map((c) => (
                 <button type="button" key={c.sha} onClick={() => pick(c.sha)} className="flex w-full items-center gap-3 border-b px-3 py-1.5 text-left last:border-b-0 hover:bg-accent">
-                  <span className={`font-mono ${c.sha === head ? "text-emerald-600" : c.sha === base ? "text-sky-600" : "text-muted-foreground"}`}>{c.sha.slice(0, 7)}</span>
+                  <span className={`font-mono ${c.sha === head ? "font-semibold text-brand" : c.sha === base ? "text-foreground underline underline-offset-2" : "text-muted-foreground"}`}>{c.sha.slice(0, 7)}</span>
                   <span className="truncate">{c.message}</span>
                   <span className="ml-auto shrink-0 text-muted-foreground">{c.author ?? ""}</span>
                 </button>

@@ -13,13 +13,16 @@ import { recentDocumentIds } from "@/lib/client/recent-documents";
 import type { DocumentKind, DocumentSummary, RepoView, WorkspaceSummary } from "@/lib/client/types";
 import { cn, timeAgo } from "@/lib/utils";
 
+/** Kinds are told apart by their icon; every tile uses the brand tone. */
+const KIND_TONE = "bg-brand/10 text-brand";
+
 const KINDS: Record<DocumentKind, { icon: typeof BookOpen; tone: string; plural: string }> = {
-  handbook: { icon: BookOpen, tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", plural: "Handbooks" },
-  commit_report: { icon: GitCompareArrows, tone: "bg-sky-500/10 text-sky-700 dark:text-sky-400", plural: "Commit reports" },
-  implementation_brief: { icon: FileSearch, tone: "bg-violet-500/10 text-violet-700 dark:text-violet-400", plural: "Implementation briefs" },
-  explanation: { icon: MessageSquareText, tone: "bg-amber-500/10 text-amber-700 dark:text-amber-400", plural: "Explanations" },
-  readme: { icon: FileText, tone: "bg-rose-500/10 text-rose-700 dark:text-rose-400", plural: "READMEs" },
-  brainstorm: { icon: Lightbulb, tone: "bg-teal-500/10 text-teal-700 dark:text-teal-400", plural: "Brainstorm specs" },
+  handbook: { icon: BookOpen, tone: KIND_TONE, plural: "Handbooks" },
+  commit_report: { icon: GitCompareArrows, tone: KIND_TONE, plural: "Commit reports" },
+  implementation_brief: { icon: FileSearch, tone: KIND_TONE, plural: "Implementation briefs" },
+  explanation: { icon: MessageSquareText, tone: KIND_TONE, plural: "Explanations" },
+  readme: { icon: FileText, tone: KIND_TONE, plural: "READMEs" },
+  brainstorm: { icon: Lightbulb, tone: KIND_TONE, plural: "Brainstorm specs" },
 };
 
 type Filter = "all" | DocumentKind;
@@ -140,7 +143,7 @@ function Chip({ active, onClick, label, count }: { active: boolean; onClick: () 
       onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors",
-        active ? "border-foreground bg-foreground text-background" : "bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+        active ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
       )}
     >
       {label}
@@ -190,7 +193,7 @@ function EvidenceMeter({ verified, total }: { verified: number; total: number })
   return (
     <span className="flex shrink-0 items-center gap-2" title={`${verified} of ${total} claims verified against the source`}>
       <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-        <span className={cn("block h-full rounded-full", pct >= 90 ? "bg-emerald-500" : pct >= 70 ? "bg-amber-500" : "bg-red-500")} style={{ width: `${pct}%` }} />
+        <span className={cn("block h-full rounded-full", pct >= 90 ? "bg-success" : pct >= 70 ? "bg-warning" : "bg-destructive")} style={{ width: `${pct}%` }} />
       </span>
       <span className="tabular-nums">
         {verified}/{total}

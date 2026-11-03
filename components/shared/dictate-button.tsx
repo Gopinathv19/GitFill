@@ -103,18 +103,18 @@ export function DictateButton({
   if (state.kind === "recording") {
     const left = MAX_RECORDING_SECONDS - elapsed;
     return (
-      <div className={cn("flex shrink-0 items-center gap-1 rounded-full border border-red-500/40 bg-red-500/5 py-0.5 pl-2.5 pr-0.5", className)} role="group" aria-label="Recording">
+      <div className={cn("flex shrink-0 items-center gap-1 rounded-full border border-destructive/40 bg-destructive/5 py-0.5 pl-2.5 pr-0.5", className)} role="group" aria-label="Recording">
         <span className="relative flex size-2.5">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-500 opacity-60" />
-          <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-60" />
+          <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
         </span>
         <span className="w-10 text-center font-mono text-xs tabular-nums text-foreground" aria-live="off">
           {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
         </span>
         <span className="hidden h-1.5 w-12 overflow-hidden rounded-full bg-muted sm:block" aria-hidden>
-          <span ref={meter} className="block h-full origin-left rounded-full bg-red-500 transition-transform duration-75" />
+          <span ref={meter} className="block h-full origin-left rounded-full bg-destructive transition-transform duration-75" />
         </span>
-        {left <= 30 && <span className="text-[11px] text-red-600">{left}s left</span>}
+        {left <= 30 && <span className="text-[11px] text-destructive">{left}s left</span>}
         <Button type="button" size="icon" variant="ghost" className="size-7 rounded-full" aria-label="Cancel recording" onClick={() => (state.rec.cancel(), setState({ kind: "idle" }))}>
           <X className="size-3.5" />
         </Button>
