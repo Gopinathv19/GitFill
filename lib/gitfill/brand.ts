@@ -23,6 +23,8 @@ const TAILWIND_CONFIG = /(^|\/)tailwind\.config\.(js|cjs|mjs|ts)$/i;
 const FONT_FILE = /(^|\/)(app\/layout|src\/app\/layout|pages\/_app|src\/pages\/_app|index|src\/main|src\/index)\.(tsx|jsx|ts|js|html)$/i;
 const SKIP_DIR = /(^|\/)(node_modules|dist|build|out|\.next|vendor|coverage|storybook-static|public\/vendor)\//;
 const MAX_BYTES = 60_000;
+/** System aliases, generic families and icon or emoji fonts: never a brand's text font. */
+const NOT_TEXT_FONT = /^(blinkmacsystemfont|-apple-system|system-ui|ui-[\w-]+|(sans-)?serif|monospace|inherit|initial)$|emoji|symbol|icons?\b|font ?awesome/i;
 
 /** Pure part: the brand from file texts. Exported for tests. */
 export function brandFromFiles(files: Array<{ path: string; content: string }>): RepoBrand {
@@ -69,8 +71,8 @@ export function brandFromFiles(files: Array<{ path: string; content: string }>):
     }
   };
   // shadcn's default --primary is near-black; only a coloured token counts as the brand accent.
-  fromVar("accent", ["brand", "color-brand", "brand-primary", "primary", "color-primary", "accent-color", "ring", "chart-1"], isColourful);
-  fromVar("accent2", ["brand-secondary", "color-secondary", "secondary-accent", "chart-2", "accent"], (hex) => isColourful(hex) && hex !== brand.accent);
+  fromVar("accent", ["brand", "color-brand", "brand-primary", "primary", "color-primary", "accent-color", "ring"], isColourful);
+  fromVar("accent2", ["brand-secondary", "color-secondary", "secondary-accent", "accent"], (hex) => isColourful(hex) && hex !== brand.accent);
   fromVar("background", ["background", "color-background", "bg", "color-bg", "body-bg"]);
   fromVar("text", ["foreground", "color-foreground", "text", "color-text", "body-color"]);
 
@@ -87,9 +89,16 @@ export function brandFromFiles(files: Array<{ path: string; content: string }>):
   for (const f of files) {
     const nextFont = /import\s*\{([^}]+)\}\s*from\s*["']next\/font\/google["']/.exec(f.content);
     const families = nextFont ? nextFont[1]!.split(",").map((s) => s.trim().split(/\s+as\s+/)[0]!.replace(/_/g, " ")).filter((s) => !/mono/i.test(s)) : [];
-    for (const m of f.content.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&:)]+)/g)) families.push(decodeURIComponent(m[1]!).replace(/\+/g, " "));
-    if (families[0]) set("bodyFont", families[0], f.path);
-    if (families[1]) set("headingFont", families[1], f.path);
+    for (const m of f.content.matchAll(/fonts\.googleapis\.com\/css2?\?family=([^"'&:)]+)/g)) {
+      try {
+        families.push(decodeURIComponent(m[1]!).replace(/\+/g, " "));
+      } catch {
+        // A malformed escape: skip this font, keep the rest of the brand.
+      }
+    }
+    const text = families.filter((x) => !NOT_TEXT_FONT.test(x));
+    if (text[0]) set("bodyFont", text[0], f.path);
+    if (text[1]) set("headingFont", text[1], f.path);
   }
   for (const [key, names] of [["bodyFont", ["font-sans", "font-body", "font-family", "body-font"]], ["headingFont", ["font-heading", "font-display", "heading-font"]]] as const) {
     for (const name of names) {
@@ -135,7 +144,7 @@ export async function readRepoBrand(client: GitHubClient, repo: { owner: string;
 
 /** The same from a scouting source (the chat's read-only repository view). */
 export async function readRepoBrandFromSource(source: CodeSource): Promise<RepoBrand> {
-  const { paths } = await source.listFiles({ limit: 20_000 });
+  const { paths } = await source.listFiles({ limit: 5000 });
   const files: Array<{ path: string; content: string }> = [];
   for (const path of brandFiles(paths.map((path) => ({ path })))) {
     const read = await source.read(path, { start: 1, end: 2000 }).catch(() => null);
@@ -169,7 +178,7 @@ function resolveVar(vars: Map<string, { value: string; path: string }>, name: st
 function firstFamily(value: string): string | undefined {
   for (const part of value.split(",")) {
     const name = part.trim().replace(/^['"]|['"]$/g, "");
-    if (/^var\(/.test(name) || /^(ui-)?(sans-serif|serif|monospace|system-ui|-apple-system|inherit|initial)$/i.test(name)) continue;
+    if (/^var\(/.test(name) || NOT_TEXT_FONT.test(name)) continue;
     return /^[A-Za-z0-9 \-]{2,40}$/.test(name) ? name : undefined;
   }
 }

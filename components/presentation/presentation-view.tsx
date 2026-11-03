@@ -18,6 +18,7 @@ import { useJob, type JobView } from "@/lib/client/use-job";
 import { isTemplateId, TEMPLATES, type TemplateId } from "@/lib/presentation/themes";
 import { TemplateGallery } from "./template-gallery";
 import { collectVideos, VideoPanel } from "./video-panel";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { cn as cx } from "@/lib/utils";
 
 /** Card header with title, description and an optional action, in SysOne style. */
@@ -93,6 +94,7 @@ interface DeckView {
 
 export function PresentationView({ deckId }: { deckId: string }) {
   const [deck, setDeck] = useState<DeckView | null>(null);
+  usePageTitle(deck?.title ?? null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [slide, setSlide] = useState(0);
@@ -189,7 +191,7 @@ export function PresentationView({ deckId }: { deckId: string }) {
       </Button>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{version.spec.title}</h1>
+          <h1 className="font-display text-2xl font-medium tracking-tight sm:text-[1.75rem]">{version.spec.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             <a className="hover:text-foreground" href={repo.url} target="_blank" rel="noreferrer">
               {repo.owner}/{repo.name}
@@ -571,7 +573,7 @@ function EvidencePanel({ claims, repoUrl, commit }: { claims: DeckView["claims"]
                   )}
                 </td>
                 <td className="px-4 py-2">
-                  <Badge variant={c.status === "verified" ? "success" : c.status === "inferred" ? "info" : "warning"}>{c.status}</Badge>
+                  <Badge variant={c.status === "verified" ? "success" : c.status === "inferred" ? "warning" : "danger"}>{c.status}</Badge>
                 </td>
               </tr>
             ))}

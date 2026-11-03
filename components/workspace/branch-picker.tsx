@@ -46,8 +46,16 @@ export function BranchPicker({ workspaceId, repo, onChanged, className }: { work
   };
 
   const shown = (branches ?? []).filter((b) => b.toLowerCase().includes(filter.trim().toLowerCase()));
+  const typed = filter.trim();
   return (
-    <DropdownMenu onOpenChange={(open) => open && void load()}>
+    <>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (!open) return;
+        setError(null);
+        void load();
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -67,8 +75,16 @@ export function BranchPicker({ workspaceId, repo, onChanged, className }: { work
             autoFocus
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            // Typing must not trigger the menu's type-ahead.
-            onKeyDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              // Arrow down moves into the list; printable keys stay in the box instead of the menu's type-ahead.
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                e.currentTarget.closest("[role=menu]")?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+              } else if (e.key === "Enter" && typed && !shown.length) {
+                e.preventDefault();
+                void pick(typed);
+              } else if (e.key.length === 1) e.stopPropagation();
+            }}
             placeholder="Find a branch…"
             aria-label="Find a branch"
             className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -80,7 +96,13 @@ export function BranchPicker({ workspaceId, repo, onChanged, className }: { work
             <p className="flex items-center gap-1.5 px-2 py-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" />Loading branches…</p>
           )}
           {error && <p role="alert" className="px-2 py-1.5 text-xs text-destructive">{error}</p>}
-          {branches && !shown.length && <p className="px-2 py-1.5 text-xs text-muted-foreground">No branch matches.</p>}
+          {/* Only the first 100 branches are listed; any other branch can be typed and used. */}
+          {branches && typed && !branches.includes(typed) && (
+            <DropdownMenuItem onSelect={() => void pick(typed)} className="text-xs">
+              Use “{typed}”
+            </DropdownMenuItem>
+          )}
+          {branches && !shown.length && !typed && <p className="px-2 py-1.5 text-xs text-muted-foreground">No branches found.</p>}
           {shown.map((b) => (
             <DropdownMenuItem key={b} onSelect={() => void pick(b)} className="text-xs">
               <span className="truncate">{b}</span>
@@ -90,5 +112,8 @@ export function BranchPicker({ workspaceId, repo, onChanged, className }: { work
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* The menu closes on select, so a failed switch is shown next to the trigger. */}
+    {error && busy !== "loading" && <span role="alert" className="ml-1 text-xs text-destructive">{error}</span>}
+    </>
   );
 }

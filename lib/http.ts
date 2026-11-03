@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { ConfigError } from "@/lib/config/env";
+import { ConfigError, env } from "@/lib/config/env";
 import { GitHubError } from "@/lib/connectors/github/client";
 import { InvalidRepositoryUrlError } from "@/lib/connectors/github/url";
 import { UnauthorizedError } from "@/lib/auth/current";
@@ -47,4 +47,15 @@ export function handleError(err: unknown) {
   }
   console.error(err);
   return fail(500, "internal_error", "Something went wrong.");
+}
+
+/**
+ * The origin redirects must point at. Behind a proxy, req.url is the container's own address
+ * (http://localhost:8080), so production uses APP_BASE_URL; development follows the request so any
+ * local port works.
+ */
+export function publicOrigin(req: Request): string {
+  if (process.env.NODE_ENV === "production") return env().APP_BASE_URL;
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  return host ? `${req.headers.get("x-forwarded-proto") ?? "http"}://${host}` : new URL(req.url).origin;
 }

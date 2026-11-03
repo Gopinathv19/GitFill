@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { getSessionUser, safeNext } from "@/lib/auth/current";
 import { authMode, env } from "@/lib/config/env";
 
+export const metadata = { title: "Sign in · GitFill" };
+
 const ERRORS: Record<string, string> = {
   github_not_configured: "GitHub sign-in isn't configured. Set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET.",
   invalid_state: "The sign-in link expired. Please try again.",
@@ -28,7 +30,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <Logo />
         <div className="rounded-lg border bg-card shadow-sm">
           <div className="space-y-1 border-b px-6 py-5">
-            <h1 className="text-lg font-semibold tracking-tight">Sign in</h1>
+            <h1 className="font-display text-2xl font-medium tracking-tight">Sign in</h1>
             <p className="text-sm text-muted-foreground">Use your GitHub account. The first sign-in creates your account.</p>
           </div>
           <div className="space-y-3 px-6 py-5">

@@ -56,7 +56,7 @@ services:
   # Applies database migrations once per deploy, then exits.
   migrate:
     <<: *app
-    command: ["npm", "run", "db:migrate"]
+    command: ["node_modules/.bin/tsx", "scripts/migrate.ts"]
     restart: "no"
     depends_on:
       postgres:
@@ -64,7 +64,8 @@ services:
 
   web:
     <<: *app
-    command: ["npx", "next", "start", "-p", "8080"]
+    command: ["node_modules/.bin/next", "start", "-p", "8080", "-H", "0.0.0.0", "--keepAliveTimeout", "65000"]
+    init: true
     ports:
       - "127.0.0.1:${GITFILL_PORT:-3100}:8080"
     healthcheck:
@@ -81,7 +82,9 @@ services:
   # Deck and video jobs drive headless Chromium: give it shared memory and room.
   worker:
     <<: *app
-    command: ["npm", "run", "worker"]
+    # tsx directly (not npm → sh → tsx) under tini, so SIGTERM reaches the worker and it finishes its job.
+    command: ["node_modules/.bin/tsx", "scripts/worker.ts"]
+    init: true
     shm_size: 1gb
     stop_grace_period: 5m
     deploy:

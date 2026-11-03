@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { getGitHubConnection, githubClientFor } from "@/lib/auth/github-token";
+import { getGitHubConnection, getGitHubToken, githubClientFor } from "@/lib/auth/github-token";
 import { appClientFor, githubAppConfig } from "@/lib/connectors/github/app";
 import { parseGitHubUrl } from "@/lib/connectors/github/url";
 import type { Database } from "@/lib/db";
@@ -116,10 +116,13 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
   const repo = await getRepository(db, userId, row.workspaceId, row.repositoryId);
   if (!repo.repositoryUrl) throw new DeliveryError(`"${repo.name}" has no code on GitHub yet.`);
   const ref = parseGitHubUrl(repo.repositoryUrl);
+  // Without the user's own token GitHub cannot say whether they may push, and the app (or the server's
+  // fallback token) must never write on behalf of someone who could not.
+  if (!(await getGitHubToken(db, userId))) throw new DeliveryError("Connect your GitHub account on the Configuration page to open pull requests.");
   const client = await githubClientFor(db, userId);
   const info = await client.getRepo(ref.owner, ref.repo);
   // The app can write wherever it is installed, so it only acts for people who could push themselves.
-  if (info.canPush === false) throw new DeliveryError(`Your GitHub account cannot push to ${info.fullName}, so GitFill will not open a pull request there.`);
+  if (info.canPush !== true) throw new DeliveryError(`Your GitHub account cannot push to ${info.fullName}, so GitFill will not open a pull request there.`);
   // One open pull request per document: asking again points at it instead of opening a duplicate.
   const earlier = Array.isArray((doc.metadata as Record<string, unknown> | null)?.pullRequests) ? ((doc.metadata as { pullRequests: PullRequestRecord[] }).pullRequests) : [];
   for (const pr of [...earlier].reverse()) {
@@ -128,20 +131,26 @@ export async function openDocumentPullRequest(db: Database, userId: string, row:
   const app = githubAppConfig();
   const writer = app ? await appClientFor(ref.owner, ref.repo, app) : client;
   const requester = (await getGitHubConnection(db, userId)).login;
-  const base = info.defaultBranch;
-  const head = await client.getCommit(ref.owner, ref.repo, base);
+  // Into the branch GitFill works on (the one the document was written from); GitHub's default if it was deleted.
+  let base = repo.defaultBranch ?? info.defaultBranch;
+  let head = await client.getCommit(ref.owner, ref.repo, base).catch(() => null);
+  if (!head) {
+    base = info.defaultBranch;
+    head = await client.getCommit(ref.owner, ref.repo, base);
+  }
   const tree = await client.getTree(ref.owner, ref.repo, head.sha);
   const existingDocs = [];
-  for (const e of tree.entries.filter((x) => x.type === "blob" && x.path.startsWith(`${DOCS_DIR}/`) && x.path.endsWith(".md") && x.path !== DOCS_INDEX).slice(0, 50)) {
-    const text = await client.getFileTextIfExists(ref.owner, ref.repo, head.sha, e.path, 4000);
+  const docEntries = destinationOf(doc.kind) === "docs" ? tree.entries.filter((x) => x.type === "blob" && x.path.startsWith(`${DOCS_DIR}/`) && x.path.endsWith(".md") && x.path !== DOCS_INDEX) : [];
+  for (const e of docEntries.slice(0, 50)) {
+    const text = await client.getFileHead(ref.owner, ref.repo, head.sha, e.path, 4000);
     const fm = text ? readFrontMatter(text) : {};
     existingDocs.push({ path: e.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null });
   }
 
   const existingKnowledge = [];
   if (destinationOf(doc.kind) === "knowledge") {
-    for (const e of tree.entries.filter((x) => x.type === "blob" && isKnowledgeSpec(x.path)).slice(0, 80)) {
-      const text = await client.getFileTextIfExists(ref.owner, ref.repo, head.sha, e.path, 4000);
+    for (const e of tree.entries.filter((x) => x.type === "blob" && isKnowledgeSpec(x.path)).sort((a, b) => b.path.localeCompare(a.path)).slice(0, 80)) {
+      const text = await client.getFileHead(ref.owner, ref.repo, head.sha, e.path, 4000);
       const fm = text ? readFrontMatter(text) : {};
       existingKnowledge.push({ path: e.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null, status: fm.status ?? null });
     }

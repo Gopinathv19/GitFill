@@ -5,9 +5,11 @@ import { DeckGrid } from "@/components/presentation/deck-grid";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Skeleton } from "@/components/ui/input";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { useRecent } from "@/lib/client/use-recent";
 
 export default function PresentationsPage() {
+  usePageTitle("Presentations");
   const { data, error } = useRecent();
   return (
     <div className="space-y-6">

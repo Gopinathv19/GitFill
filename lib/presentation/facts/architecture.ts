@@ -31,7 +31,7 @@ const MAX_GROUP_NAMES = 6;
  * Self-imports count as cycles of one file. All cycles are returned unless `limit` is given.
  */
 export function dependencyCycles(graph: CodeGraph, opts: { limit?: number } = {}): DependencyCycle[] {
-  return cyclesOf(graph.dependencies).slice(0, opts.limit ?? Infinity);
+  return cyclesOf(graph.dependencies).slice(0, Math.max(0, opts.limit ?? Infinity));
 }
 
 /**
@@ -82,7 +82,7 @@ export function architectureFacts(graph: CodeGraph, opts: { analyzedFiles: numbe
 function fileCycleSection(cycles: DependencyCycle[], scope: string): string {
   if (!cycles.length) return `No circular dependencies among ${scope} (measured from their imports; files GitFill did not read are not counted).`;
   const involved = cycles.reduce((sum, c) => sum + c.files.length, 0);
-  const lines = cycles.slice(0, MAX_FILE_CYCLES).map((c) => `- ${loopText(c.cycle)} (${groupText(c, "file")})`);
+  const lines = cycles.slice(0, MAX_FILE_CYCLES).map((c) => `- ${loopText(c.cycle, "files")} (${groupText(c, "file")})`);
   if (cycles.length > MAX_FILE_CYCLES) lines.push(`- …and ${cycles.length - MAX_FILE_CYCLES} more`);
   const groups = `${cycles.length} group${cycles.length === 1 ? "" : "s"}, ${involved} file${involved === 1 ? "" : "s"} involved`;
   return `Circular dependencies (measured from imports among ${scope}; ${groups}; files GitFill did not read are not counted):\n${lines.join("\n")}`;
@@ -91,21 +91,33 @@ function fileCycleSection(cycles: DependencyCycle[], scope: string): string {
 function dirCycleSection(cycles: DependencyCycle[], examples: Map<string, { from: string; to: string }>, scope: string): string {
   const lines = cycles.slice(0, MAX_DIR_CYCLES).map((c) => {
     const steps: string[] = [];
-    for (let i = 0; i + 1 < c.cycle.length && i < MAX_LOOP_STEPS; i++) {
+    for (let i = 0; i + 1 < c.cycle.length && i < shownSteps(c.cycle); i++) {
       const e = examples.get(edgeKey(c.cycle[i]!, c.cycle[i + 1]!));
       if (e) steps.push(`${e.from} imports ${e.to}`);
     }
     const labeled = { files: c.files.map(dirLabel), cycle: c.cycle.map(dirLabel) };
-    return `- ${loopText(labeled.cycle)} (${groupText(labeled, "directory")}; e.g. ${steps.join("; ")})`;
+    return `- ${loopText(labeled.cycle, "directories")} (${groupText(labeled, "directory")}; e.g. ${steps.join("; ")})`;
   });
   if (cycles.length > MAX_DIR_CYCLES) lines.push(`- …and ${cycles.length - MAX_DIR_CYCLES} more`);
-  return `Circular dependencies between directories (files grouped by their first two directory levels, e.g. lib/agent/; loops inside one directory are left out; measured among ${scope}):\n${lines.join("\n")}`;
+  // "lib/" next to "lib/agent/" reads as the whole of lib/ unless the text says otherwise.
+  const shallow = cycles.slice(0, MAX_DIR_CYCLES).some((c) => c.files.some((d) => d !== ROOT && !d.includes("/")));
+  const note = shallow ? "; a one-level name such as lib/ means only the files directly in it, not its subdirectories" : "";
+  return `Circular dependencies between directories (files grouped by their first two directory levels, e.g. lib/agent/${note}; loops inside one directory are left out; measured among ${scope}):\n${lines.join("\n")}`;
 }
 
-/** "a → b → a", cut after MAX_LOOP_STEPS arrows so one huge loop cannot flood the prompt. */
-function loopText(cycle: string[]): string {
+/** Arrows drawn before a long loop is cut (all of them when it fits). */
+function shownSteps(cycle: string[]): number {
+  return cycle.length - 1 <= MAX_LOOP_STEPS ? cycle.length - 1 : MAX_LOOP_STEPS - 1;
+}
+
+/**
+ * "a → b → a", cut after MAX_LOOP_STEPS nodes so one huge loop cannot flood the prompt. The gap
+ * counts the hidden nodes (not steps: hiding k nodes removes k + 1 arrows), so the number is exact.
+ */
+function loopText(cycle: string[], noun: "files" | "directories"): string {
   if (cycle.length - 1 <= MAX_LOOP_STEPS) return cycle.join(" → ");
-  return `${cycle.slice(0, MAX_LOOP_STEPS).join(" → ")} → …${cycle.length - 1 - MAX_LOOP_STEPS} more steps… → ${cycle[cycle.length - 1]}`;
+  const hidden = cycle.length - 1 - MAX_LOOP_STEPS;
+  return `${cycle.slice(0, MAX_LOOP_STEPS).join(" → ")} → …${hidden} more ${hidden === 1 ? (noun === "files" ? "file" : "directory") : noun}… → ${cycle[cycle.length - 1]}`;
 }
 
 /** Says how big the group is, and names the members the loop shown does not pass through. */

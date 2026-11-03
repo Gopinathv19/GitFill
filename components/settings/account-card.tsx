@@ -54,7 +54,7 @@ export function AccountCard({ user, oauthConfigured }: { user: SessionUser; oaut
       <div className="flex items-center gap-4 p-5">
         <Avatar className="size-12">
           {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.login} referrerPolicy="no-referrer" />}
-          <AvatarFallback className="bg-gradient-to-br from-brand to-brand-2 text-white">{getInitials(name)}</AvatarFallback>
+          <AvatarFallback className="bg-brand text-brand-foreground">{getInitials(name)}</AvatarFallback>
         </Avatar>
         <div className="min-w-0">
           <p className="truncate font-semibold">{name}</p>

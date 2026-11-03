@@ -14,10 +14,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
 ));
 Textarea.displayName = "Textarea";
 
-export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ className, ...props }, ref) => (
-  <select ref={ref} className={cn(field, "h-10", className)} {...props} />
-));
-Select.displayName = "Select";
+// Themed, not the browser's native menu.
+export { Select } from "./select";
 
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return <label className={cn("mb-1.5 block text-sm font-medium", className)} {...props} />;

@@ -16,14 +16,16 @@ import { AppNotInstalledError } from "@/lib/connectors/github/app";
 import { GitHubError } from "@/lib/connectors/github/client";
 import { describeRepoBrand, readRepoBrandFromSource } from "@/lib/gitfill/brand";
 import { DeliveryError } from "@/lib/gitfill/deliver";
+import { DEFAULT_PREFERENCES, describePreferences } from "@/lib/preferences/schema";
+import { getPreferences, rememberNote } from "@/lib/preferences/service";
 import type { CodeSource } from "@/lib/repo-store";
 import { MemoryRecorder, type LiveEvent } from "./recorder";
 import { createSearchTools } from "./search-tools";
 import { logTimings } from "./timings";
 import { defineTool, runToolLoop } from "./tool-loop";
 
-/** Rounds of ask_user the agent may spend agreeing a document's intent before it must start. */
-export const INTENT_MAX_ROUNDS = 3;
+/** Default rounds of ask_user the agent may spend agreeing a document's intent before it must start (configurable per user). */
+export const INTENT_MAX_ROUNDS = DEFAULT_PREFERENCES.loop.intentRounds;
 
 const CHAT_SYSTEM_PROMPT = `You are GitFill, an assistant inside a user's workspace. GitFill helps developers understand, explain, reuse and evolve codebases. The workspace holds GitHub repositories and the documents and presentations generated from them.
 
@@ -38,17 +40,18 @@ You can act through tools:
 - start_reuse_brief to write an implementation brief that transfers patterns from a reference repository into a target repository. Runs in the background.
 - start_presentation to generate a validated presentation deck; revise_presentation to change one. Runs in the background.
 - start_readme to write or update a repository's README.md from the code and the team's .gitfill/assets (screenshots, logo, brand and notes). Runs in the background.
-- app_look to read the repository's own look (brand colours, background, fonts and where they come from, plus what is missing), for the look question before a presentation or README.
+- app_look to read the repository's own look (brand colours, background, fonts and where they come from, plus what is missing), for the look question before a presentation.
 - save_brainstorm to write the current brainstorm up as an implementation spec for a coding agent, grounded in the code, and (with pull_request) add it to the repository's .gitfill/knowledge folder. Runs in the background.
 - open_pull_request to add a finished document to its repository as a pull request: a README becomes README.md, handbooks and other docs go to .gitfill/docs/, brainstorm specs and implementation briefs to .gitfill/knowledge/ (with its index for coding agents). Only when the user asks for it.
+- remember to save a lasting preference or fact about the user to their memory (see their configuration below).
 - start_video to make an explainer video (1080p MP4 with original music) and its thumbnail from an existing presentation. Runs in the background. A video needs a presentation of that repository; if there is none, offer to make the presentation first.
 Otherwise always finish with reply.
 
 Before a handbook, presentation, README or video: agree the intent, in rounds
-A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So before you start any of these jobs, run an intent loop of up to ${INTENT_MAX_ROUNDS} rounds of ask_user (the current round count is given at the end of this message):
+A document is only as good as its fit to the reader, and most of that cannot be read from code: who will read it and what they will do with it, what story it should tell (product pitch, onboarding, engineering walkthrough, investor or judge review…), which parts deserve depth, what must be named or shown, and what to leave out. So before you start any of these jobs, run an intent loop of ask_user rounds, up to the limit given at the end of this message with the current round count (the user can change it on the Configuration page; by default ${INTENT_MAX_ROUNDS}):
 1. Scout first. Look at the repository with list_files / grep / read_file (README, top-level directories, manifests, docs, entry points, .gitfill/assets) until you know what is distinctive about it: its apps or modules, its audience-facing features, the external services or sponsors it highlights, its docs and screenshots.
 2. Round 1 — what and for whom. If the user has not said which format they want, ask it first, never pick it yourself: a presentation (slides to present), a document (a handbook to read: technical handbook, onboarding guide, deep dive…), a README, a video (made from a presentation) or a combination; say in each option what it is good for given what they asked. In the same round ask who the reader or audience is and the one thing they should leave with, and what scope (whole repository, one module, one feature, naming the real ones).
-3. Round 2 — content and look. Ask which flows or features to feature in depth (multiple: true) and what to skip; for a presentation its length (default 10 pages; speaker notes are always included); and the look: call app_look first and offer "the app's own look" (name the colours and fonts it found and where) against a GitFill template (a kind "template" question only when they want a template). Offer an upload question (kind "upload") for screenshots, a logo or documents unless they already attached some or .gitfill/assets has them.
+3. Round 2 — content and look. Ask which flows or features to feature in depth (multiple: true) and what to skip; for a presentation its length (default 10 pages; speaker notes are always included); and, for a presentation only, the look: call app_look first and offer "the app's own look" (name the colours and fonts it found and where) against a GitFill template (a kind "template" question only when they want a template). Handbooks and videos have no look question. Offer an upload question (kind "upload") for screenshots, a logo or documents unless they already attached some; decks can only show uploaded files, so .gitfill/assets screenshots do not count for a presentation (for a README they do).
 4. Last round — confirm. Write the brief you will use back to the user in a few lines (format, reader and goal, scope, must-cover with paths, skip, length, look, assets) as the intro of one ask_user question: "Generate it like this?" with options such as "Yes, generate" and "Change something". Start the job only after they confirm.
 Every round: 1-4 questions, each grounded in something you found (name the real modules, features, services; put the path in the option's detail), and a short intro saying what you learned from their last answers. Skip a round when its decisions are already made, and skip straight to the job when the user says "just go" / "use your judgment", asks for a revision, or the round limit is reached (then go with sensible defaults and say which you chose). Never ask the same thing twice.
 When you start the job, the brief is a compact plain-text spec: reader and goal, framing and tone, sections or topics that must be covered (with the paths you found), names to feature, things to skip, depth, anything to show (screenshots, demo path, Q&A). Put the user's own words into it.
@@ -126,7 +129,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
   const jobIds: string[] = [];
   const attachments: string[] = [];
   const recorder = new MemoryRecorder(opts.live);
-  const [history, workspace] = await Promise.all([listMessages(db, sessionId, 16), getWorkspace(db, userId, workspaceId)]);
+  const [history, workspace, prefs] = await Promise.all([listMessages(db, sessionId, 16), getWorkspace(db, userId, workspaceId), getPreferences(db, userId)]);
   const messages: ChatCompletionMessageParam[] = history.map((m) => ({ role: m.role, content: m.content.slice(0, 6000) }));
   const act = async <T>(fn: () => Promise<T>, fallback: string) => {
     try {
@@ -400,6 +403,12 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
         }, "Could not start the revision."),
     }),
     defineTool({
+      name: "remember",
+      description: "Save a lasting preference or fact about the user (how they like answers, who they present to, their role or project) to their memory, used in later conversations. Not for one-off details of this request.",
+      input: z.object({ note: z.string().trim().min(3).max(300).describe("One short sentence in the third person, e.g. \"Presents to hackathon judges; prefers 8-slide decks.\"") }),
+      run: async (i) => act(() => rememberNote(db, userId, i.note), "Could not save to memory."),
+    }),
+    defineTool({
       name: "reply",
       description: "Send the final reply to the user.",
       input: z.object({ message: z.string().min(1).max(2000) }),
@@ -412,7 +421,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
     client: new MuseClient(recorder.modelObserver()),
     model: modelFor("analyst"),
     purpose: "workspace_chat",
-    system: `${CHAT_SYSTEM_PROMPT}\n\n${describeWorkspace(workspace)}\n\n${describeIntentRounds(history)}`,
+    system: `${CHAT_SYSTEM_PROMPT}\n\n${describeWorkspace(workspace)}\n\n${describePreferences(prefs)}\n\n${describeIntentRounds(history, prefs.loop.intentRounds)}`,
     messages,
     tools,
     recorder,
@@ -440,11 +449,11 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
   return { reply, jobIds };
 }
 
-function describeIntentRounds(history: Array<{ role: string; content: string; jobIds?: string[] }>): string {
+function describeIntentRounds(history: Array<{ role: string; content: string; jobIds?: string[] }>, max: number): string {
   const rounds = questionRounds(history);
-  return rounds >= INTENT_MAX_ROUNDS
-    ? `Intent rounds asked so far: ${rounds} of ${INTENT_MAX_ROUNDS}. The limit is reached: do not ask about the document again; start the job the user asked for with what you know and say which defaults you chose (a brainstorm may continue as plain discussion).`
-    : `Intent rounds asked so far: ${rounds} of ${INTENT_MAX_ROUNDS}.`;
+  return rounds >= max
+    ? `Intent rounds asked so far: ${rounds} of ${max}. The limit is reached: if the user is still asking for that document, do not ask about it again with ask_user; start it with what you know and say which defaults you chose. Exception: if their last answer rejects the brief ("Change something") without saying what, ask what to change in a plain reply and start once they say. A brainstorm may continue as plain discussion; never start a document they moved away from.`
+    : `Intent rounds asked so far: ${rounds} of ${max}.`;
 }
 
 /** Workspace contents for the system prompt, so the agent needs no lookup turn before acting. */

@@ -19,7 +19,7 @@ export function WorkspaceHeader({ id, name, description, actions }: { id: string
     <div className="border-b">
       <div className="flex items-start justify-between gap-4 pt-1">
         <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold tracking-tight">{name}</h1>
+          <h1 className="truncate font-display text-2xl font-medium tracking-tight">{name}</h1>
           {description && <p className="mt-0.5 line-clamp-1 text-sm text-muted-foreground">{description}</p>}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}

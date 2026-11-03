@@ -45,7 +45,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env.production ps
 curl -s http://127.0.0.1:3100/api/health
 
 # 5. nginx + TLS (its own server block; the other app's config is not touched)
-sudo cp deploy/nginx/gitfill.conf /etc/nginx/sites-available/gitfill.conf   # set server_name
+sudo cp deploy/nginx/gitfill.conf /etc/nginx/sites-available/gitfill.conf   # set server_name (and the upstream port if you changed GITFILL_PORT)
 sudo ln -s /etc/nginx/sites-available/gitfill.conf /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d gitfill.example.com

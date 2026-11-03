@@ -323,6 +323,11 @@ function brandFonts(base: TemplateFonts, brand: Brand | undefined): TemplateFont
   };
 }
 
+/** A brand text colour, only when it is legible on the background. */
+function legibleText(text: string | undefined, bg: string): string | undefined {
+  return text && isHexColor(text) && isHexColor(bg) && contrastRatio(text, bg) >= 4.5 ? text : undefined;
+}
+
 /** The template with the brand applied, as the renderer and the PPTX writer use it. */
 export function getTheme(name: string, brand?: Brand): Theme {
   const template = TEMPLATES[isTemplateId(name) ? name : "midnight"];
@@ -332,12 +337,14 @@ export function getTheme(name: string, brand?: Brand): Theme {
     const light = luminance(brand.background) > 0.4;
     palette.bg = brand.background;
     palette.mode = brand.mode ?? (light ? "light" : "dark");
-    // Text follows the background unless the brand names it, so a dark brand on a light template stays readable.
-    palette.text = brand.text && isHexColor(brand.text) ? brand.text : light ? "#14181b" : "#f4f6f6";
+    // Text follows the background unless the brand names a colour that reads on it (4.5:1), so a
+    // brand read from a repository can never make the deck unreadable.
+    palette.text = legibleText(brand.text, brand.background) ?? (light ? "#14181b" : "#f4f6f6");
     palette.surface = mix(brand.background, palette.text, 0.04);
   } else {
     if (brand?.mode) palette.mode = brand.mode;
-    if (brand?.text && isHexColor(brand.text)) palette.text = brand.text;
+    const text = legibleText(brand?.text, palette.bg);
+    if (text) palette.text = text;
   }
   if (brand?.accent && isHexColor(brand.accent)) {
     palette.accent = brand.accent;

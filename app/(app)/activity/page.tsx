@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Skeleton } from "@/components/ui/input";
 import { useRecent, type Recent } from "@/lib/client/use-recent";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { cn, timeAgo } from "@/lib/utils";
 
 type Job = Recent["jobs"][number];
@@ -47,6 +48,7 @@ function dayLabel(date: string): string {
 }
 
 export default function ActivityPage() {
+  usePageTitle("Activity");
   const { data, error } = useRecent({ live: true });
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -108,7 +110,7 @@ export default function ActivityPage() {
                   )}
                 >
                   {f}
-                  <span className={cn("text-xs tabular-nums", filter === f ? "text-background/70" : "text-muted-foreground/70")}>{counts[f]}</span>
+                  <span className={cn("text-xs tabular-nums", filter === f ? "text-primary-foreground/80" : "text-muted-foreground/70")}>{counts[f]}</span>
                 </button>
               ))}
             </div>

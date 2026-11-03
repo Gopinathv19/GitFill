@@ -57,13 +57,13 @@ export async function readGitfill(
   }
   const docs: GitfillContext["docs"] = [];
   for (const d of inside.filter((p) => p.path.startsWith(`${DOCS_DIR}/`) && p.path.endsWith(".md") && p.path !== DOCS_INDEX).slice(0, 30)) {
-    const head = await client.getFileTextIfExists(repo.owner, repo.name, repo.sha, d.path, 4000).catch(() => null);
+    const head = await client.getFileHead(repo.owner, repo.name, repo.sha, d.path, 4000).catch(() => null);
     const fm = head ? readFrontMatter(head) : {};
     docs.push({ path: d.path, title: fm.title ?? null, sourceCommit: fm.source_commit ?? null });
   }
   const knowledge: GitfillContext["knowledge"] = [];
-  for (const k of inside.filter((p) => isKnowledgeSpec(p.path)).slice(0, 30)) {
-    const head = await client.getFileTextIfExists(repo.owner, repo.name, repo.sha, k.path, 4000).catch(() => null);
+  for (const k of inside.filter((p) => isKnowledgeSpec(p.path)).sort((a, b) => b.path.localeCompare(a.path)).slice(0, 30)) {
+    const head = await client.getFileHead(repo.owner, repo.name, repo.sha, k.path, 4000).catch(() => null);
     const fm = head ? readFrontMatter(head) : {};
     knowledge.push({ path: k.path, title: fm.title ?? null, status: fm.status ?? null });
   }
@@ -78,15 +78,16 @@ export async function readGitfill(
 }
 
 /** The .gitfill context as prompt text for writers. Notes are the team's own words, treated as data. */
-export function describeGitfill(ctx: GitfillContext): string {
+/** `images: false` for decks, which can only show uploaded images, not repository paths. */
+export function describeGitfill(ctx: GitfillContext, opts: { images?: boolean } = {}): string {
   if (!ctx.present) return "The repository has no .gitfill folder yet: no screenshots, brand file or notes were provided.";
   const list = (kind: AssetKind) => ctx.assets.filter((a) => a.kind === kind).map((a) => `- ${a.path} (${Math.round(a.sizeBytes / 1024)} KB)`);
   const images = list("image");
   const videos = list("video");
   return [
     "The repository's .gitfill folder (provided by the team for GitFill):",
-    images.length ? `Images you may link (use these exact relative paths):\n${images.join("\n")}` : "No images were provided.",
-    videos.length ? `Videos:\n${videos.join("\n")}` : "",
+    opts.images === false ? "" : images.length ? `Images you may link (use these exact relative paths):\n${images.join("\n")}` : "No images were provided.",
+    opts.images === false ? "" : videos.length ? `Videos:\n${videos.join("\n")}` : "",
     ...ctx.notes.map((n) => `<team_note path="${n.path}">\n${n.content}\n</team_note>`),
     ctx.knowledge.length ? `Implementation specs in .gitfill/knowledge (earlier brainstorms; planned work, not facts about the code):\n${ctx.knowledge.map((k) => `- ${k.path}${k.title ? ` — ${k.title}` : ""}${k.status ? ` [${k.status}]` : ""}`).join("\n")}` : "",
     ctx.docs.length ? `Docs GitFill wrote before:\n${ctx.docs.map((d) => `- ${d.path}${d.title ? ` — ${d.title}` : ""}${d.sourceCommit ? ` (from ${d.sourceCommit.slice(0, 7)})` : ""}`).join("\n")}` : "",

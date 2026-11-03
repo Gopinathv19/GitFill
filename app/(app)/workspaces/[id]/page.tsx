@@ -15,6 +15,7 @@ import type { ChatSession } from "@/lib/client/types";
 import { BranchPicker } from "@/components/workspace/branch-picker";
 import { useWorkspace } from "@/lib/client/use-workspace";
 import { refreshWorkspaces, useWorkspaces } from "@/lib/client/workspaces-store";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { timeAgo } from "@/lib/utils";
 
 /** New-session screen for a workspace: one composer; sending creates a session and opens it. */
@@ -22,6 +23,7 @@ export default function NewSessionPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const router = useRouter();
   const { data, error, reload } = useWorkspace(id);
+  usePageTitle(data ? `Ask · ${data.name}` : null);
   const workspaces = useWorkspaces();
   const sessions = useSessions();
   const [text, setText] = useState("");
@@ -61,7 +63,7 @@ export default function NewSessionPage({ params }: { params: Promise<{ id: strin
       </PageHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col px-4 pb-10 pt-[12vh]">
-          <h1 className="mb-5 flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <h1 className="mb-5 flex items-center gap-2 font-display text-3xl font-medium tracking-tight">
             GitFill <span className="text-primary">Ask</span>
           </h1>
 

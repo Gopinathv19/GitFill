@@ -6,3 +6,8 @@ storage
 !.env.example
 .git
 coverage
+**/.env
+**/.env.*
+!**/.env.example
+deploy/.env.production
+*.pem

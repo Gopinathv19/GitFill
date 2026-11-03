@@ -9,11 +9,13 @@ import { RepoRow } from "@/components/workspace/repo-row";
 import { WorkspaceHeader } from "@/components/workspace/workspace-header";
 import { api, errorMessage } from "@/lib/client/api";
 import { useWorkspace } from "@/lib/client/use-workspace";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { refreshWorkspaces } from "@/lib/client/workspaces-store";
 
 export default function WorkspaceRepositoriesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data, error, reload } = useWorkspace(id);
+  usePageTitle(data ? `Repositories · ${data.name}` : "Repositories");
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function remove(repoId: string, name: string) {

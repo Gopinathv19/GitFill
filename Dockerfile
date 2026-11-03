@@ -12,7 +12,7 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runtime
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git fonts-dejavu-core \
+  && apt-get install -y --no-install-recommends git ca-certificates ffmpeg fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production PORT=8080 ARTIFACT_STORAGE_PATH=/data

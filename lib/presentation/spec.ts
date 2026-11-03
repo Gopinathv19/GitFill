@@ -373,6 +373,8 @@ export const deckSpecSchema = z.object({
   purpose: text(240),
   theme: z.enum(THEMES).default("midnight").describe("Template id."),
   brand: brandSchema.optional(),
+  /** True when the brand was read from the analyzed repository alone (not set by the user or a .pptx template). */
+  brandFromRepo: z.boolean().optional(),
   deckType: z.enum(DECK_TYPES).default("engineering_walkthrough"),
   materials: z.array(materialSchema).max(40).default([]),
   /** Legacy switch from before `labels`; only used to fill in default labels for older decks. */

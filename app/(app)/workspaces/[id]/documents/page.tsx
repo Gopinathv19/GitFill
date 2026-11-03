@@ -9,11 +9,13 @@ import { ReuseDialog } from "@/components/workspace/reuse-dialog";
 import { WorkspaceHeader } from "@/components/workspace/workspace-header";
 import { api } from "@/lib/client/api";
 import type { DocumentSummary } from "@/lib/client/types";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { useWorkspace } from "@/lib/client/use-workspace";
 
 export default function WorkspaceDocumentsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data, error, reload } = useWorkspace(id);
+  usePageTitle(data ? `Documents · ${data.name}` : "Documents");
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   useEffect(() => {
     api<DocumentSummary[]>(`/api/documents?workspaceId=${id}`).then(setDocs, () => setDocs([]));

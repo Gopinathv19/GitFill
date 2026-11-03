@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { firstSlidePreviews } from "@/lib/workspaces/service";
 import { agentEvents, agentRuns, artifacts, deckVersions, decks, documents, evidenceClaims, generationJobs, projects, repositorySnapshots, workspaces } from "@/lib/db/schema";
@@ -6,16 +6,15 @@ import { agentEvents, agentRuns, artifacts, deckVersions, decks, documents, evid
 /** Read models for the API. Raw repository content is never returned, only metadata and summaries. */
 
 export async function getJobView(db: Database, jobId: string) {
-  const job = (await db.select().from(generationJobs).where(eq(generationJobs.id, jobId)))[0];
+  // One round trip: the events join their run instead of waiting for the run ids. This is polled
+  // every few seconds while a job runs, so each sequential query is felt.
+  const [[job], runs, eventRows] = await Promise.all([
+    db.select().from(generationJobs).where(eq(generationJobs.id, jobId)),
+    db.select().from(agentRuns).where(eq(agentRuns.jobId, jobId)).orderBy(asc(agentRuns.startedAt)),
+    db.select({ e: agentEvents }).from(agentEvents).innerJoin(agentRuns, eq(agentEvents.runId, agentRuns.id)).where(eq(agentRuns.jobId, jobId)).orderBy(asc(agentEvents.startedAt)),
+  ]);
   if (!job) return undefined;
-  const runs = await db.select().from(agentRuns).where(eq(agentRuns.jobId, jobId)).orderBy(asc(agentRuns.startedAt));
-  const events = runs.length
-    ? await db
-        .select()
-        .from(agentEvents)
-        .where(inArray(agentEvents.runId, runs.map((r) => r.id)))
-        .orderBy(asc(agentEvents.startedAt))
-    : [];
+  const events = eventRows.map((r) => r.e);
   return {
     id: job.id,
     kind: job.kind,
@@ -48,32 +47,49 @@ export async function getJobView(db: Database, jobId: string) {
   };
 }
 
+const JOB_SUMMARY_COLUMNS = {
+  id: generationJobs.id,
+  kind: generationJobs.kind,
+  status: generationJobs.status,
+  repositoryUrl: generationJobs.repositoryUrl,
+  userPrompt: generationJobs.userPrompt,
+  deckId: generationJobs.deckId,
+  documentId: generationJobs.documentId,
+  createdAt: generationJobs.createdAt,
+  startedAt: generationJobs.startedAt,
+  completedAt: generationJobs.completedAt,
+  errorMessage: generationJobs.errorMessage,
+};
+
 export async function listRecent(db: Database, userId: string, limit = 20) {
-  const jobs = await db
-    .select({ job: generationJobs, workspaceId: workspaces.id, workspaceName: workspaces.name })
+  const [jobs, deckRows, docRows] = await Promise.all([
+    db
+    // Only what the list shows: a job's options can hold a whole brainstorm transcript.
+    .select({ job: JOB_SUMMARY_COLUMNS, workspaceId: workspaces.id, workspaceName: workspaces.name })
     .from(generationJobs)
     .innerJoin(projects, eq(generationJobs.projectId, projects.id))
     .innerJoin(workspaces, eq(projects.workspaceId, workspaces.id))
     .where(eq(workspaces.ownerId, userId))
     .orderBy(desc(generationJobs.createdAt))
-    .limit(limit);
-  const deckRows = await db
+    .limit(limit),
+    db
     .select({ deck: decks, workspaceId: workspaces.id, workspaceName: workspaces.name })
     .from(decks)
     .innerJoin(projects, eq(decks.projectId, projects.id))
     .innerJoin(workspaces, eq(projects.workspaceId, workspaces.id))
     .where(eq(workspaces.ownerId, userId))
     .orderBy(desc(decks.updatedAt))
-    .limit(limit);
-  const previews = deckRows.length ? await firstSlidePreviews(db, deckRows.map((r) => r.deck.id)) : new Map<string, string>();
-  const docRows = await db
-    .select({ doc: documents, workspaceId: workspaces.id, workspaceName: workspaces.name })
+    .limit(limit),
+    db
+    .select({ doc: DOC_SUMMARY_COLUMNS, workspaceId: workspaces.id, workspaceName: workspaces.name })
     .from(documents)
     .innerJoin(projects, eq(documents.projectId, projects.id))
     .innerJoin(workspaces, eq(projects.workspaceId, workspaces.id))
     .where(eq(workspaces.ownerId, userId))
     .orderBy(desc(documents.createdAt))
-    .limit(limit);
+    .limit(limit),
+  ]);
+  const previews = deckRows.length ? await firstSlidePreviews(db, deckRows.map((r) => r.deck.id)) : new Map<string, string>();
   return {
     jobs: jobs.map(({ job: j, workspaceId, workspaceName }) => ({
       id: j.id,
@@ -106,17 +122,16 @@ export async function listRecent(db: Database, userId: string, limit = 20) {
 export async function getDeckView(db: Database, deckId: string) {
   const deck = (await db.select().from(decks).where(eq(decks.id, deckId)))[0];
   if (!deck) return undefined;
-  const snap = (await db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)))[0]!;
-  const versions = await db.select().from(deckVersions).where(eq(deckVersions.deckId, deckId)).orderBy(desc(deckVersions.version));
-  const files = versions.length
-    ? await db
-        .select()
-        .from(artifacts)
-        .where(inArray(artifacts.deckVersionId, versions.map((v) => v.id)))
-        .orderBy(asc(artifacts.slideIndex))
-    : [];
-  const claims = await db.select().from(evidenceClaims).where(eq(evidenceClaims.snapshotId, snap.id)).orderBy(asc(evidenceClaims.createdAt));
-  const pending = await db.select({ id: generationJobs.id, status: generationJobs.status, kind: generationJobs.kind }).from(generationJobs).where(eq(generationJobs.deckId, deckId)).orderBy(desc(generationJobs.createdAt)).limit(1);
+  // Everything else depends only on the deck row, so it is read in one parallel round trip.
+  const [[snap], versions, fileRows, claims, pending] = await Promise.all([
+    db.select().from(repositorySnapshots).where(eq(repositorySnapshots.id, deck.snapshotId)),
+    db.select().from(deckVersions).where(eq(deckVersions.deckId, deckId)).orderBy(desc(deckVersions.version)),
+    db.select({ a: artifacts }).from(artifacts).innerJoin(deckVersions, eq(artifacts.deckVersionId, deckVersions.id)).where(eq(deckVersions.deckId, deckId)).orderBy(asc(artifacts.slideIndex)),
+    db.select().from(evidenceClaims).where(eq(evidenceClaims.snapshotId, deck.snapshotId)).orderBy(asc(evidenceClaims.createdAt)),
+    db.select({ id: generationJobs.id, status: generationJobs.status, kind: generationJobs.kind }).from(generationJobs).where(eq(generationJobs.deckId, deckId)).orderBy(desc(generationJobs.createdAt)).limit(1),
+  ]);
+  if (!snap) return undefined;
+  const files = fileRows.map((r) => r.a);
   const summary = snap.summary as { analysis?: unknown; stats?: unknown; agent?: unknown } | null;
 
   return {
@@ -174,7 +189,21 @@ export function documentExcerpt(markdown: string, max = 220): string | null {
   return null;
 }
 
-function documentSummary(d: DocumentRow, workspaceId: string, workspaceName: string) {
+/**
+ * The columns a document card needs. Only the start of the markdown is read (enough for the
+ * excerpt): full documents can be hundreds of KB each, and lists show dozens of them.
+ */
+const DOC_SUMMARY_COLUMNS = {
+  id: documents.id,
+  kind: documents.kind,
+  title: documents.title,
+  createdAt: documents.createdAt,
+  // Only the metadata keys a card shows (a README's metadata also carries its whole request).
+  metadata: sql<Record<string, unknown>>`jsonb_build_object('repository', ${documents.metadata}->'repository', 'commitSha', ${documents.metadata}->'commitSha', 'headSha', ${documents.metadata}->'headSha', 'claims', ${documents.metadata}->'claims')`,
+  markdown: sql<string>`left(${documents.markdown}, 3000)`,
+};
+
+function documentSummary(d: Pick<DocumentRow, "id" | "kind" | "title" | "createdAt" | "metadata" | "markdown">, workspaceId: string, workspaceName: string) {
   const meta = (d.metadata ?? {}) as Record<string, unknown>;
   return {
     id: d.id,
@@ -195,7 +224,7 @@ export async function listDocuments(db: Database, userId: string, opts: { worksp
   if (opts.workspaceId) conditions.push(eq(workspaces.id, opts.workspaceId));
   if (opts.kind) conditions.push(eq(documents.kind, opts.kind));
   const rows = await db
-    .select({ doc: documents, workspaceId: workspaces.id, workspaceName: workspaces.name })
+    .select({ doc: DOC_SUMMARY_COLUMNS, workspaceId: workspaces.id, workspaceName: workspaces.name })
     .from(documents)
     .innerJoin(projects, eq(documents.projectId, projects.id))
     .innerJoin(workspaces, eq(projects.workspaceId, workspaces.id))
@@ -217,9 +246,12 @@ export async function getDocumentView(db: Database, documentId: string) {
   )[0];
   if (!row) return undefined;
   const snapIds = [row.doc.snapshotId, row.doc.secondarySnapshotId].filter((x): x is string => Boolean(x));
-  const snaps = snapIds.length ? await db.select().from(repositorySnapshots).where(inArray(repositorySnapshots.id, snapIds)) : [];
-  const claims = snapIds.length ? await db.select().from(evidenceClaims).where(inArray(evidenceClaims.snapshotId, snapIds)).orderBy(asc(evidenceClaims.createdAt)) : [];
-  const job = row.doc.jobId ? (await db.select({ id: generationJobs.id, status: generationJobs.status }).from(generationJobs).where(eq(generationJobs.id, row.doc.jobId)))[0] : undefined;
+  const [snaps, claims, jobRows] = await Promise.all([
+    snapIds.length ? db.select().from(repositorySnapshots).where(inArray(repositorySnapshots.id, snapIds)) : [],
+    snapIds.length ? db.select().from(evidenceClaims).where(inArray(evidenceClaims.snapshotId, snapIds)).orderBy(asc(evidenceClaims.createdAt)) : [],
+    row.doc.jobId ? db.select({ id: generationJobs.id, status: generationJobs.status }).from(generationJobs).where(eq(generationJobs.id, row.doc.jobId)) : [],
+  ]);
+  const job = jobRows[0];
   const { claims: claimCounts, ...summary } = documentSummary(row.doc, row.workspaceId, row.workspaceName);
   return {
     ...summary,

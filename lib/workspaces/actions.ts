@@ -11,6 +11,8 @@ import { logTimings } from "@/lib/agent/timings";
 import { answerGitHubQuestion, openRepositorySource } from "@/lib/understanding/ask";
 import { compareRequestSchema, handbookRequestSchema, type AskRequest, type CompareRequest, type HandbookRequest, type ReuseKind } from "@/lib/understanding/schemas";
 import { openDocumentPullRequest } from "@/lib/gitfill/deliver";
+import type { Preferences } from "@/lib/preferences/schema";
+import { getPreferences } from "@/lib/preferences/service";
 import {
   brainstormRequestSchema,
   generateRequestSchema,
@@ -41,10 +43,26 @@ function requireUrl(repo: Repo): string {
 export async function startPresentation(db: Database, userId: string, workspaceId: string, repositoryId: string, options: Partial<Omit<GenerateRequest, "repositoryUrl">>) {
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   const url = requireUrl(repo);
-  const request = generateRequestSchema.parse({ ...options, repositoryUrl: url, branch: options.branch ?? repo.defaultBranch ?? undefined });
+  const request = generateRequestSchema.parse({ ...withPresentationDefaults(options, (await getPreferences(db, userId)).presentation), repositoryUrl: url, branch: options.branch ?? repo.defaultBranch ?? undefined });
   const job = await enqueueGeneration(db, { workspaceId, repositoryId }, request);
   kickInlineWorker(db);
   return { job, repo, request };
+}
+
+/**
+ * The user's presentation configuration fills what the request leaves unset. Anything the request
+ * sets wins; a template picked for this deck turns the project theme off unless asked for.
+ */
+export function withPresentationDefaults(options: Partial<Omit<GenerateRequest, "repositoryUrl">>, prefs: Preferences["presentation"]): Partial<Omit<GenerateRequest, "repositoryUrl">> {
+  const theme = options.theme ?? prefs.template;
+  return {
+    ...options,
+    deckType: options.deckType ?? prefs.deckType,
+    theme,
+    repoBrand: options.repoBrand ?? (options.theme ? false : prefs.useProjectTheme),
+    slideCount: options.slideCount ?? (options.minutes ? undefined : prefs.slides),
+    outputs: options.outputs ?? { pdf: true, readme: false, illustrations: prefs.illustrations, pptx: prefs.pptx },
+  };
 }
 
 /** Queues a revision for a deck the user owns, refusing if one is already running. */

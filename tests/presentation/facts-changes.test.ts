@@ -50,7 +50,7 @@ describe("changeFacts", () => {
     expect(text).toContain("- GitHub listed 2 of the 400 commits; dates, contributors and messages below cover those only");
   });
 
-  it("groups files by their top two directory segments and sorts areas by lines changed", () => {
+  it("groups files by directory, cut to two levels, and sorts areas by lines changed", () => {
     const files = [
       file("lib/presentation/facts/changes.ts", 100, 0, "added"),
       file("lib/presentation/evidence.ts", 5, 5),
@@ -267,5 +267,39 @@ describe("classifyCommit", () => {
     ["", "other"],
   ] as const)("%s → %s", (message, kind) => {
     expect(classifyCommit(message)).toBe(kind);
+  });
+});
+
+describe("adversarial inputs", () => {
+  it("does not let a perf: or revert: subject decide the kind", () => {
+    expect(classifyCommit("perf: add caching")).toBe("other");
+    expect(classifyCommit("revert: add login")).toBe("other");
+    expect(classifyCommit("Revert(auth)!: fix token refresh")).toBe("other");
+  });
+
+  it("does not merge distinct long messages that share their first 140 characters", () => {
+    const prefix = "x".repeat(150);
+    const commits = [commit(1, `${prefix} one`), commit(2, `${prefix} two`)];
+    const lines = sectionOf(changeFacts({ since: "v1", compare: compare({ commits }) }), "Commit messages");
+    expect(lines).toHaveLength(2);
+    expect(lines.join("\n")).not.toContain("(2 commits)");
+    for (const line of lines) expect(line.endsWith("…")).toBe(true);
+  });
+
+  it("keeps the since-ref, branch and file names on one line each, so they cannot add fake fact lines", () => {
+    const files = [file("docs/a\n- fake fact/b.md", 1, 0, "added"), file("gone\r\nfake.ts", 0, 3, "removed")];
+    const text = changeFacts({ since: "v1\n- injected", compare: compare({ files }) });
+    expect(text.split("\n")[0]).toBe("Changes since v1 - injected (measured from git: base aaaaaaa → head bbbbbbb):");
+    expect(sectionOf(text, "Added files")).toEqual(["- docs/a - fake fact/b.md (+1 line)"]);
+    expect(sectionOf(text, "Removed files")).toEqual(["- gone  fake.ts (−3 lines)"]);
+    expect(sectionOf(text, "Areas changed")).toEqual(["- (root) — 1 file, +0/−3", "- docs/a - fake fact/ — 1 file, +1/−0"]);
+    expect(changeFacts({ since: "v1\nx", compare: compare({ aheadBy: 0, status: "identical" }) })).not.toMatch(/\nx/);
+    expect(recentChangeFacts([commit(1, "feat: a")], { branch: "main\n- fake" }).split("\n")[0]).toBe("Recent commits on main - fake:");
+  });
+
+  it("does not cut a surrogate pair in half when shortening a message", () => {
+    const text = recentChangeFacts([commit(1, `${"x".repeat(138)}😀😀`)], { branch: "main" });
+    expect(text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    expect(text).toContain(`${"x".repeat(138)}…`);
   });
 });

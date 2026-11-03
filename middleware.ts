@@ -12,7 +12,8 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: { code: "unauthorized", message: "Sign in required." } }, { status: 401 });
   }
-  const login = new URL("/login", req.url);
+  // Behind a proxy req.url is the container's address; production redirects to the public URL.
+  const login = new URL("/login", process.env.NODE_ENV === "production" && process.env.APP_BASE_URL ? process.env.APP_BASE_URL : req.url);
   if (pathname !== "/") login.searchParams.set("next", `${pathname}${search}`);
   return NextResponse.redirect(login);
 }

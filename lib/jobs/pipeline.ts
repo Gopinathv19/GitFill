@@ -15,6 +15,8 @@ import { artifacts, deckVersions, decks, evidenceClaims, generationJobs, project
 import { buildEvidenceReport } from "@/lib/documents/evidence-report";
 import { generateReadme } from "@/lib/documents/readme";
 import { readRepoBrand, type RepoBrand } from "@/lib/gitfill/brand";
+import { changeFacts, recentChangeFacts } from "@/lib/presentation/facts/changes";
+import { redactSecrets } from "@/lib/presentation/redact";
 import { describeGitfill, readGitfill } from "@/lib/gitfill/read";
 import type { Claim } from "@/lib/evidence/evidence";
 import { buildValidatedDeck, type BuildResult } from "@/lib/presentation/build";
@@ -122,8 +124,11 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   // The team's .gitfill folder (notes, brand.json) and the application's own look from its code.
   const at = { owner: String(snapshot.metadata.owner), name: String(snapshot.metadata.repo), sha: snapshot.version, paths: snapshot.inventory };
   const gitfillEvent = await recorder.start("tool", "read_gitfill", { repository: snapshot.displayName });
-  const gitfill = await readGitfill(github, at).catch(() => null);
-  await gitfillEvent.succeed({ present: gitfill?.present ?? false, images: gitfill?.assets.filter((a) => a.kind === "image").length ?? 0, notes: gitfill?.notes.map((n) => n.path) ?? [] });
+  const gitfill = await readGitfill(github, at).catch(async (err) => {
+    await gitfillEvent.fail(publicErrorMessage(err));
+    return null;
+  });
+  if (gitfill) await gitfillEvent.succeed({ present: gitfill.present, images: gitfill.assets.filter((a) => a.kind === "image").length, notes: gitfill.notes.map((n) => n.path) });
   // A gallery template the user picked keeps its own look unless they asked for the app's.
   const useRepoBrand = request.repoBrand ?? !request.theme;
   const repoBrand = useRepoBrand ? await readRepoBrandEvent(recorder, github, at) : null;
@@ -134,11 +139,11 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   const materialRows = uploadRows.filter((u) => request.assetIds.includes(u.id) && u.kind !== "template");
   const materials = toMaterials(materialRows);
   const brand = resolveBrand(request.brand, uploadRows.filter((u) => request.assetIds.includes(u.id)), repoBrand?.brand);
-  const teamNotes = gitfill?.present ? describeGitfill(gitfill) : "";
+  const teamNotes = gitfill?.present ? describeGitfill(gitfill, { images: false }) : "";
 
   // 2. Analysis agent: real tool loop with verified evidence, steered by what the deck is for.
   const analysis = await analyzeRepository({ client, snapshot, userRequest: deckBrief({ ...request, teamNotes }), recorder });
-  const facts = codeFacts(analysis.context);
+  const facts = [codeFacts(analysis.context), await changeFactsEvent(recorder, github, at, request, snapshot.branch)].filter(Boolean).join("\n\n");
   const paths = repositoryPaths(analysis.context);
 
   const summary: SnapshotSummary = {
@@ -185,7 +190,9 @@ async function runGenerate(db: Database, job: Job, recorder: DbRecorder, client:
   // 3. Planner: Muse Wonder outlines the deck, then each page is composed in parallel.
   await recorder.setStage("planning_presentation");
   const planned = await planDeck({ client, snapshot, analysis: analysis.analysis, claims: analysis.claims, request: { ...request, brand, teamNotes }, recorder, facts, materials, paths });
-  const spec = planned.spec;
+  // Remember when the look came only from the repository, so "Change template" can switch colours too.
+  const brandFromRepo = Boolean(repoBrand && Object.keys(repoBrand.brand).length && !request.brand && !uploadRows.some((u) => u.kind === "template" && request.assetIds.includes(u.id)));
+  const spec = { ...redactSecrets(planned.spec).value, ...(brandFromRepo ? { brandFromRepo } : {}) };
 
   const [deck] = await db.insert(decks).values({ projectId: job.projectId, snapshotId: snap!.id, title: spec.title }).returning();
   const version = 1;
@@ -264,7 +271,9 @@ async function runRevise(db: Database, job: Job, recorder: DbRecorder, client: M
   if (!plan.operations.length) throw new RevisionError(`This revision changed nothing: ${plan.summary}`);
   const applied = applyRevision(current, plan);
   if (options.theme && options.brand !== undefined) applied.spec = { ...applied.spec, brand: options.brand ?? undefined };
-  const { spec } = normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)), { paths });
+  // A template picked for a deck styled in the app's own look takes the template's colours.
+  else if (options.theme && current.brandFromRepo) applied.spec = { ...applied.spec, brand: undefined, brandFromRepo: false };
+  const spec = redactSecrets(normalizeDeckSpec(deckSpecSchema.parse(applied.spec), new Set(claims.map((c) => c.ref)), { paths }).spec).value;
 
   const version = latest.version + 1;
   const prefix = `decks/${deck.id}/v${version}`;
@@ -432,8 +441,37 @@ function mimeOf(key: string): string {
 function resolveBrand(requested: Brand | undefined, rows: UploadRow[], fromRepo?: Brand): Brand | undefined {
   const template = rows.find((u) => u.kind === "template");
   const fromTemplate = template ? brandSchema.safeParse((template.metadata as { brand?: unknown }).brand ?? {}) : null;
-  const merged = { ...(fromRepo ?? {}), ...(fromTemplate?.success ? fromTemplate.data : {}), ...(requested ?? {}) };
+  const tpl = fromTemplate?.success ? fromTemplate.data : {};
+  // Background, text and mode belong together: when a later layer sets the background, the repo's
+  // text colour and mode would no longer match it.
+  const repo = { ...(fromRepo ?? {}) };
+  if (tpl.background || requested?.background) {
+    delete repo.background;
+    delete repo.text;
+    delete repo.mode;
+  }
+  const merged = { ...repo, ...tpl, ...(requested ?? {}) };
   return Object.keys(merged).length ? merged : undefined;
+}
+
+/**
+ * Release-notes material for the deck, measured from git: changes since the ref the user named, or
+ * the latest commits for a stakeholder update. A failure (unknown ref, GitHub down) is recorded as a
+ * step and the deck goes on without it.
+ */
+async function changeFactsEvent(recorder: DbRecorder, github: GitHubClient, at: { owner: string; name: string; sha: string }, request: { changesSince?: string; deckType: string }, branch: string): Promise<string> {
+  if (!request.changesSince && request.deckType !== "stakeholder_update") return "";
+  const event = await recorder.start("tool", "read_changes", { since: request.changesSince ?? `recent commits on ${branch}` });
+  try {
+    const text = request.changesSince
+      ? changeFacts({ since: request.changesSince, compare: await github.compare(at.owner, at.name, request.changesSince, at.sha) })
+      : recentChangeFacts(await github.listCommits(at.owner, at.name, at.sha, 20), { branch });
+    await event.succeed({ chars: text.length });
+    return text;
+  } catch (err) {
+    await event.fail(publicErrorMessage(err));
+    return "";
+  }
 }
 
 /** Reads the application's own look, recorded as a step so the user sees what was used and what is missing. */

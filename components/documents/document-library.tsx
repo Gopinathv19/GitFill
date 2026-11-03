@@ -147,7 +147,7 @@ function Chip({ active, onClick, label, count }: { active: boolean; onClick: () 
       )}
     >
       {label}
-      <span className={cn("text-xs tabular-nums", active ? "text-background/70" : "text-muted-foreground/70")}>{count}</span>
+      <span className={cn("text-xs tabular-nums", active ? "text-primary-foreground/80" : "text-muted-foreground/70")}>{count}</span>
     </button>
   );
 }

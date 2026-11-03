@@ -42,6 +42,9 @@ const CONVENTIONAL_TYPES: Record<string, CommitKind> = {
   style: "chore",
 };
 
+/** Types that say what a commit is but not which kind above; their subject ("revert: add login") must not decide it. */
+const UNCLASSIFIED_TYPES = new Set(["perf", "revert"]);
+
 /** First words of plain-English messages ("Add export button", "Fixed crash on save"). */
 const FIRST_WORD_KINDS: Array<[CommitKind, Set<string>]> = [
   ["feature", new Set(["add", "adds", "added", "adding", "implement", "implements", "implemented", "introduce", "introduces", "introduced", "create", "creates", "created", "support", "supports", "enable", "enables", "allow", "allows", "new"])],
@@ -68,6 +71,7 @@ export function classifyCommit(message: string): CommitKind {
   if (conventional) {
     const kind = CONVENTIONAL_TYPES[conventional[1]!.toLowerCase()];
     if (kind) return kind;
+    if (UNCLASSIFIED_TYPES.has(conventional[1]!.toLowerCase())) return "other";
     // An unknown prefix is usually a scope ("api: add retries"); classify what follows it.
     return plainEnglishKind(conventional[2] ?? "");
   }
@@ -90,10 +94,10 @@ function plainEnglishKind(text: string): CommitKind {
  */
 export function changeFacts(input: { since: string; compare: CompareResult }): string {
   const { since, compare } = input;
-  const header = `Changes since ${since} (measured from git: base ${shortSha(compare.baseSha)} → head ${shortSha(compare.headSha)}):`;
+  const header = `Changes since ${oneLine(since)} (measured from git: base ${shortSha(compare.baseSha)} → head ${shortSha(compare.headSha)}):`;
   if (compare.status === "behind" || compare.aheadBy <= 0) {
-    const behind = compare.behindBy > 0 ? `\n- The head is ${plural(compare.behindBy, "commit")} behind ${since}.` : "";
-    return `${header}\n- There are no new commits since ${since}.${behind}`;
+    const behind = compare.behindBy > 0 ? `\n- The head is ${plural(compare.behindBy, "commit")} behind ${oneLine(since)}.` : "";
+    return `${header}\n- There are no new commits since ${oneLine(since)}.${behind}`;
   }
 
   // GitHub's compare lists commits oldest first.
@@ -109,7 +113,7 @@ export function changeFacts(input: { since: string; compare: CompareResult }): s
   const summary = [
     `- ${plural(compare.totalCommits, "commit")}${spanText(newestFirst, " authored ")}`,
     partialCommits ? `- GitHub listed ${compare.commits.length} of the ${compare.totalCommits} commits; dates, contributors and messages below cover those only` : "",
-    compare.behindBy > 0 ? `- The head is also ${plural(compare.behindBy, "commit")} behind ${since} (the branches diverged)` : "",
+    compare.behindBy > 0 ? `- The head is also ${plural(compare.behindBy, "commit")} behind ${oneLine(since)} (the branches diverged)` : "",
     files.length ? `- ${plural(files.length, "file")} changed, +${additions}/−${deletions} lines` : "",
     compare.files.length >= GITHUB_MAX_FILES ? `- GitHub lists at most ${GITHUB_MAX_FILES} changed files and this comparison reached that cap, so the file figures are incomplete` : "",
     renamed ? `- ${plural(renamed, "file")} renamed` : "",
@@ -120,7 +124,7 @@ export function changeFacts(input: { since: string; compare: CompareResult }): s
 
   return [
     `${header}\n${summary.join("\n")}`,
-    section("Areas changed (files grouped by their top two path segments, most lines changed first):", areaLines(files), "areas", MAX_AREAS),
+    section("Areas changed (files grouped by directory, cut to its top two levels; most lines changed first):", areaLines(files), "areas", MAX_AREAS),
     section("Added files:", fileLines(files, "added"), "added files", MAX_FILE_LIST),
     section("Removed files:", fileLines(files, "removed"), "removed files", MAX_FILE_LIST),
     section("Commit messages (newest first; merge commits left out, identical messages merged):", messageLines(work), "distinct messages", MAX_MESSAGES),
@@ -146,7 +150,7 @@ export function recentChangeFacts(commits: CommitInfo[], opts: { branch: string 
     const author = c.author ? oneLine(c.author) : "";
     return `- ${dateOf(c.authoredAt) ?? "undated"} ${shortSha(c.sha)} ${firstLine(c.message)}${author ? ` (${author})` : ""}`;
   });
-  return [`Recent commits on ${opts.branch}:\n${summary.join("\n")}`, section("Commit messages (newest first):", lines, "commits", MAX_RECENT)]
+  return [`Recent commits on ${oneLine(opts.branch)}:\n${summary.join("\n")}`, section("Commit messages (newest first):", lines, "commits", MAX_RECENT)]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -167,7 +171,7 @@ function areaOf(path: string): string {
 function areaLines(files: CompareFile[]): string[] {
   const map = new Map<string, Area>();
   for (const f of files) {
-    const dir = areaOf(f.filename);
+    const dir = areaOf(cleanPath(f.filename));
     const a = map.get(dir) ?? { dir, files: 0, additions: 0, deletions: 0 };
     a.files++;
     a.additions += f.additions;
@@ -185,21 +189,24 @@ function fileLines(files: CompareFile[], status: "added" | "removed"): string[] 
   return files
     .filter((f) => f.status === status)
     .sort((a, b) => lines(b) - lines(a) || compareText(a.filename, b.filename))
-    .map((f) => `- ${f.filename} (${status === "added" ? "+" : "−"}${plural(lines(f), "line")})`);
+    .map((f) => `- ${cleanPath(f.filename)} (${status === "added" ? "+" : "−"}${plural(lines(f), "line")})`);
 }
 
-/** One line per distinct message, at its newest commit, with how many commits share it. */
+/**
+ * One line per distinct message, at its newest commit, with how many commits share it. Messages are
+ * compared before they are shortened, so two long messages sharing a prefix are not merged.
+ */
 function messageLines(newestFirst: CommitInfo[]): string[] {
   const entries = new Map<string, { commit: CommitInfo; count: number }>();
   for (const c of newestFirst) {
-    const message = firstLine(c.message);
+    const message = collapse(c.message.split("\n")[0] ?? "");
     if (!message) continue;
     const e = entries.get(message);
     if (e) e.count++;
     else entries.set(message, { commit: c, count: 1 });
   }
   return [...entries].map(
-    ([message, { commit, count }]) => `- ${dateOf(commit.authoredAt) ?? "undated"} ${shortSha(commit.sha)} ${message}${count > 1 ? ` (${count} commits)` : ""}`,
+    ([message, { commit, count }]) => `- ${dateOf(commit.authoredAt) ?? "undated"} ${shortSha(commit.sha)} ${truncate(message)}${count > 1 ? ` (${count} commits)` : ""}`,
   );
 }
 
@@ -275,8 +282,26 @@ function firstLine(message: string): string {
 
 /** Collapses whitespace and control characters and caps the length, since this text goes into prompts. */
 function oneLine(text: string): string {
-  const line = text.replace(/[\u0000-\u001f\u007f\s]+/g, " ").trim();
-  return line.length > MAX_MESSAGE_CHARS ? `${line.slice(0, MAX_MESSAGE_CHARS - 1)}…` : line;
+  return truncate(collapse(text));
+}
+
+function collapse(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, " ").trim();
+}
+
+/** Cuts at MAX_MESSAGE_CHARS without splitting a surrogate pair (a lone half is invalid text). */
+function truncate(line: string): string {
+  if (line.length <= MAX_MESSAGE_CHARS) return line;
+  const cut = line.slice(0, MAX_MESSAGE_CHARS - 1);
+  return `${/[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut}…`;
+}
+
+/**
+ * Git allows newlines and control characters in file names; one would split a fact line in the
+ * prompt, so they are shown as spaces. Paths are not shortened, since a cut path is not a real file.
+ */
+function cleanPath(path: string): string {
+  return path.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
 }
 
 function shortSha(sha: string): string {

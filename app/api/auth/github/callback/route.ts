@@ -6,6 +6,7 @@ import { getSessionUser, safeNext, signIn } from "@/lib/auth/current";
 import { storeGitHubToken } from "@/lib/auth/github-token";
 import { STATE_COOKIE } from "@/lib/auth/session";
 import { GitHubClient } from "@/lib/connectors/github/client";
+import { publicOrigin } from "@/lib/http";
 
 /**
  * GET /api/auth/github/callback — verifies state, exchanges the code for the user's token,
@@ -14,6 +15,7 @@ import { GitHubClient } from "@/lib/connectors/github/client";
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
+  const origin = publicOrigin(req);
   const jar = await cookies();
   let saved: { state?: string; next?: string; mode?: string } = {};
   try {
@@ -24,7 +26,7 @@ export async function GET(req: Request) {
   jar.delete(STATE_COOKIE);
   const mode = saved.mode === "connect" ? "connect" : "login";
   const next = safeNext(saved.next);
-  const back = (error: string) => NextResponse.redirect(new URL(mode === "connect" ? `${next}${next.includes("?") ? "&" : "?"}github=${error}` : `/login?error=${error}`, url), 303);
+  const back = (error: string) => NextResponse.redirect(new URL(mode === "connect" ? `${next}${next.includes("?") ? "&" : "?"}github=${error}` : `/login?error=${error}`, origin), 303);
 
   const code = url.searchParams.get("code");
   if (!code || !saved.state || url.searchParams.get("state") !== saved.state) return back("invalid_state");
@@ -49,10 +51,10 @@ export async function GET(req: Request) {
       const current = await getSessionUser();
       if (!current) return back("not_signed_in");
       await storeGitHubToken(db, current.id, token, scopes, profile.login);
-      return NextResponse.redirect(new URL(`${next}${next.includes("?") ? "&" : "?"}github=connected`, url), 303);
+      return NextResponse.redirect(new URL(`${next}${next.includes("?") ? "&" : "?"}github=connected`, origin), 303);
     }
 
-    const res = await signIn(db, { githubId: String(profile.id), login: profile.login, name: profile.name, email: profile.email, avatarUrl: profile.avatarUrl }, new URL(next, url).toString());
+    const res = await signIn(db, { githubId: String(profile.id), login: profile.login, name: profile.name, email: profile.email, avatarUrl: profile.avatarUrl }, new URL(next, origin).toString());
     const userId = await signedInUserId(res);
     if (userId) await storeGitHubToken(db, userId, token, scopes, profile.login);
     return res;

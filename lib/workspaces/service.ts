@@ -31,8 +31,20 @@ async function lookupRepository(db: Database, userId: string, url: string) {
   const client = await githubClientFor(db, userId);
   const info = await client.getRepo(ref.owner, ref.repo);
   const [owner, name] = info.fullName.split("/");
-  if (ref.branch) await client.getCommit(owner!, name!, ref.branch);
-  return { owner: owner!, name: name!, repositoryUrl: canonicalRepoUrl({ owner: owner!, repo: name! }), defaultBranch: ref.branch ?? info.defaultBranch, description: info.description, isPrivate: info.private };
+  // /tree/<rest> may be a branch with slashes or a branch followed by a folder: the longest prefix
+  // that is a real ref wins, otherwise GitHub's default branch.
+  let branch = info.defaultBranch;
+  if (ref.branch) {
+    const parts = ref.branch.split("/");
+    for (let k = parts.length; k >= 1; k--) {
+      const candidate = parts.slice(0, k).join("/");
+      if (await client.getCommit(owner!, name!, candidate).then(() => true, () => false)) {
+        branch = candidate;
+        break;
+      }
+    }
+  }
+  return { owner: owner!, name: name!, repositoryUrl: canonicalRepoUrl({ owner: owner!, repo: name! }), defaultBranch: branch, description: info.description, isPrivate: info.private };
 }
 
 /** The repository's branches on GitHub, with the one GitFill works on first. */
@@ -40,7 +52,7 @@ export async function listRepositoryBranches(db: Database, userId: string, works
   const repo = await getRepository(db, userId, workspaceId, repositoryId);
   if (!repo.repositoryUrl) throw new ConflictError(`"${repo.name}" has no code on GitHub yet.`);
   const ref = parseGitHubUrl(repo.repositoryUrl);
-  const names = await (await githubClientFor(db, userId)).listBranches(ref.owner, ref.repo);
+  const names = (await (await githubClientFor(db, userId)).listBranches(ref.owner, ref.repo)).filter(isValidBranchName);
   const current = repo.defaultBranch;
   return { current, branches: current ? [current, ...names.filter((n) => n !== current)] : names };
 }
@@ -107,8 +119,10 @@ export async function assertWorkspace(db: Database, userId: string, workspaceId:
 }
 
 export async function getWorkspace(db: Database, userId: string, workspaceId: string) {
-  const ws = await assertWorkspace(db, userId, workspaceId);
-  const [repos, deckRows, jobs, docRows] = await Promise.all([
+  // The ownership check runs alongside the reads; nothing is returned unless it passes.
+  const ws = { id: workspaceId };
+  const [owned, repos, deckRows, jobs, docRows] = await Promise.all([
+    assertWorkspace(db, userId, workspaceId),
     db.select().from(workspaceRepositories).where(eq(workspaceRepositories.workspaceId, ws.id)).orderBy(asc(workspaceRepositories.createdAt)),
     db
       .select({ id: decks.id, title: decks.title, latestVersion: decks.latestVersion, updatedAt: decks.updatedAt, repositoryId: projects.repositoryId })
@@ -133,10 +147,10 @@ export async function getWorkspace(db: Database, userId: string, workspaceId: st
   ]);
   const thumbs = deckRows.length ? await firstSlidePreviews(db, deckRows.map((d) => d.id)) : new Map<string, string>();
   return {
-    id: ws.id,
-    name: ws.name,
-    description: ws.description,
-    createdAt: ws.createdAt,
+    id: owned.id,
+    name: owned.name,
+    description: owned.description,
+    createdAt: owned.createdAt,
     repositories: repos.map(repoView),
     presentations: deckRows.map((d) => ({ ...d, previewArtifactId: thumbs.get(d.id) ?? null })),
     documents: docRows.map((d) => ({ id: d.id, kind: d.kind, title: d.title, createdAt: d.createdAt, repositoryId: d.repositoryId, repository: (d.metadata as { repository?: string } | null)?.repository ?? null })),

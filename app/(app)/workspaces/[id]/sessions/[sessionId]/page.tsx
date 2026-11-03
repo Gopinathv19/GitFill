@@ -11,6 +11,7 @@ import { SessionMenu } from "@/components/workspace/session-menu";
 import { WorkspacePanel } from "@/components/workspace/workspace-panel";
 import { useSessions } from "@/lib/client/sessions-store";
 import { useWorkspace } from "@/lib/client/use-workspace";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { refreshWorkspaces } from "@/lib/client/workspaces-store";
 
 const PANEL = { initial: 320, min: 260, max: 560 };
@@ -21,6 +22,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string; 
   const { data, error, reload } = useWorkspace(id);
   const sessions = useSessions();
   const session = sessions.data?.find((s) => s.id === sessionId);
+  usePageTitle(session?.title ?? null);
   const [panelOpen, togglePanel] = usePanelOpen("gitfill.panel.open", true);
   const panel = usePanelWidth("gitfill.panel.width", PANEL.initial, PANEL.min, PANEL.max);
   const onActivity = () => {

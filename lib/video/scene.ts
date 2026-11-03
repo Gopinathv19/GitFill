@@ -158,6 +158,9 @@ export async function renderVideo(html: string, opts: { duration: number; outPat
   let stderr = "";
   ffmpeg.stderr.on("data", (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
   const exited = once(ffmpeg, "close") as Promise<[number | null]>;
+  // A missing or crashed ffmpeg must fail this job, not the worker: keep the rejection and EPIPE handled.
+  exited.catch(() => {});
+  ffmpeg.stdin.on("error", () => {});
   try {
     for (let f = 0; f < total; f++) {
       await renderAt(scene.page, f / fps);

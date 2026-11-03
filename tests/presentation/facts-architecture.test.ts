@@ -71,7 +71,7 @@ describe("dependencyCycles", () => {
     const [cycle] = dependencyCycles(handGraph(edges));
     expect(cycle!.files).toHaveLength(n);
     expect(cycle!.cycle).toHaveLength(n + 1);
-    expect(architectureFacts(handGraph(edges), { analyzedFiles: n })).toContain("more steps…");
+    expect(architectureFacts(handGraph(edges), { analyzedFiles: n })).toContain(`→ …${n - 10} more files… → f000000.ts (${n} files in the cycle)`);
   });
 });
 
@@ -156,5 +156,41 @@ describe("architectureFacts", () => {
     expect(text).toContain("12 groups, 24 files involved");
     expect(text).toContain("- …and 4 more");
     expect(text.split("\n").filter((l) => l.includes(" → ")).length).toBe(8);
+  });
+
+  it("counts the hidden part of a cut loop exactly", () => {
+    // 15-file loop: 10 files drawn, f10..f14 hidden (5 files, 6 arrows).
+    const edges: Record<string, string[]> = {};
+    for (let i = 0; i < 15; i++) edges[`f${String(i).padStart(2, "0")}.ts`] = [`f${String((i + 1) % 15).padStart(2, "0")}.ts`];
+    const text = architectureFacts(handGraph(edges), { analyzedFiles: 15 });
+    expect(text).toContain("- f00.ts → f01.ts → f02.ts → f03.ts → f04.ts → f05.ts → f06.ts → f07.ts → f08.ts → f09.ts → …5 more files… → f00.ts (15 files in the cycle)");
+    const eleven: Record<string, string[]> = {};
+    for (let i = 0; i < 11; i++) eleven[`g${String(i).padStart(2, "0")}.ts`] = [`g${String((i + 1) % 11).padStart(2, "0")}.ts`];
+    expect(architectureFacts(handGraph(eleven), { analyzedFiles: 11 })).toContain("→ g09.ts → …1 more file… → g00.ts");
+  });
+
+  it("cites example imports only for the directory steps it draws", () => {
+    const edges: Record<string, string[]> = {};
+    for (let i = 0; i < 14; i++) edges[`d${String(i).padStart(2, "0")}/sub/a.ts`] = [`d${String((i + 1) % 14).padStart(2, "0")}/sub/a.ts`];
+    const line = architectureFacts(handGraph(edges), { analyzedFiles: 14 }).split("\n").find((l) => l.startsWith("- d00/sub/ →"))!;
+    expect(line).toContain("→ d09/sub/ → …4 more directories… → d00/sub/");
+    expect(line).toContain("d08/sub/a.ts imports d09/sub/a.ts)");
+    expect(line).not.toContain("d10/sub/a.ts");
+  });
+
+  it("says a one-level directory in a directory cycle means only its direct files", () => {
+    const graph = graphOf([file("lib/x.ts", "import './agent/y';\n"), file("lib/agent/y.ts", "import '../x';\n")]);
+    const text = architectureFacts(graph, { analyzedFiles: 2 });
+    expect(text).toContain("- lib/ → lib/agent/ → lib/ (2 directories in the cycle; e.g. lib/x.ts imports lib/agent/y.ts; lib/agent/y.ts imports lib/x.ts)");
+    expect(text).toContain("a one-level name such as lib/ means only the files directly in it");
+    // Two-level groups need no such note.
+    const deep = graphOf([file("lib/a/x.ts", "import '../b/y';\n"), file("lib/b/y.ts", "import '../a/x';\n")]);
+    expect(architectureFacts(deep, { analyzedFiles: 2 })).not.toContain("one-level name");
+  });
+
+  it("treats a negative limit as zero", () => {
+    const graph = handGraph({ "a.ts": ["b.ts"], "b.ts": ["a.ts"], "c.ts": ["d.ts"], "d.ts": ["c.ts"] });
+    expect(dependencyCycles(graph, { limit: -1 })).toEqual([]);
+    expect(dependencyCycles(graph, { limit: 0 })).toEqual([]);
   });
 });

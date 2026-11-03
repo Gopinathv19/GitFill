@@ -9,8 +9,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try {
     const { id } = await params;
     if (!isUuid(id)) return fail(400, "invalid_id", "Invalid job id.");
-    const { workspaceId } = await assertJobAccess(getDb(), (await requireUser()).id, id);
-    const job = await getJobView(getDb(), id);
+    // Access check and read together: the job is only returned if the check passes.
+    const [{ workspaceId }, job] = await Promise.all([assertJobAccess(getDb(), (await requireUser()).id, id), getJobView(getDb(), id)]);
     return job ? ok({ ...job, workspaceId }) : fail(404, "not_found", "Job not found.");
   } catch (err) {
     return handleError(err);

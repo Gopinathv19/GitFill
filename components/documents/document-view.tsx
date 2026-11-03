@@ -15,12 +15,14 @@ import { api, errorMessage } from "@/lib/client/api";
 import { rememberDocument } from "@/lib/client/recent-documents";
 import type { DocumentView as DocumentViewData } from "@/lib/client/types";
 import { cn } from "@/lib/utils";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { PullRequestButton } from "./pull-request-button";
 
 /** A generated document: rendered Markdown with Mermaid, plus its evidence table and sources. */
 export function DocumentView({ documentId }: { documentId: string }) {
   const router = useRouter();
   const [doc, setDoc] = useState<DocumentViewData | null>(null);
+  usePageTitle(doc?.title ?? null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"document" | "evidence">("document");
 
@@ -133,7 +135,7 @@ export function DocumentView({ documentId }: { documentId: string }) {
                       </p>
                     )}
                   </div>
-                  <Badge variant={c.status === "verified" ? "success" : c.status === "inferred" ? "info" : "warning"} className="h-fit self-start">{c.status}</Badge>
+                  <Badge variant={c.status === "verified" ? "success" : c.status === "inferred" ? "warning" : "danger"} className="h-fit self-start">{c.status}</Badge>
                 </li>
               );
             })}

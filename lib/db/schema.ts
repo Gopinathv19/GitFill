@@ -82,6 +82,8 @@ export const users = pgTable(
     /** GitHub login of the connected account (may differ from `login` for the stub user). */
     githubTokenLogin: text("github_token_login"),
     githubConnectedAt: timestamp("github_connected_at", { withTimezone: true }),
+    /** The user's Configuration page (lib/preferences/schema.ts); parsed with defaults on read. */
+    preferences: jsonb("preferences").notNull().default({}),
     createdAt: createdAt(),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }).notNull().defaultNow(),
   },

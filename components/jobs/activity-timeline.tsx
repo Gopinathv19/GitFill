@@ -57,6 +57,7 @@ const TITLES: Record<string, string> = {
   generate_readme: "Write README.md",
   read_gitfill: "Read the .gitfill folder",
   read_repo_brand: "Read the app's own colours and fonts",
+  read_changes: "Read what changed in git",
   open_pull_request: "Open a pull request",
   finish_spec: "Finish the spec",
   write_video: "Write the video",
@@ -353,7 +354,7 @@ export function ActivityTimeline({ events, running, currentStage }: { events: Jo
                 {r.items.map((e) => (
                   <li key={e.id}>
                     <button type="button" onClick={() => toggle(e.id)} className="flex w-full items-start gap-2 text-left text-[13px]">
-                      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", e.status === "failed" ? "bg-destructive" : e.status === "started" ? "bg-brand" : "bg-success")} />
+                      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", e.status === "failed" ? "bg-destructive" : e.status === "started" ? "animate-pulse bg-brand" : "bg-success")} />
                       <span className="min-w-0 flex-1 truncate text-muted-foreground hover:text-foreground">{describe(e) || TITLES[e.name] || humanize(e.name)}</span>
                       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{seconds(e.durationMs)}</span>
                     </button>

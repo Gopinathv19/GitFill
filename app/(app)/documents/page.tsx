@@ -7,9 +7,11 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Skeleton } from "@/components/ui/input";
 import { api } from "@/lib/client/api";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import type { DocumentSummary, WorkspaceSummary } from "@/lib/client/types";
 
 export default function DocumentsPage() {
+  usePageTitle("Documents");
   const [data, setData] = useState<{ documents: DocumentSummary[]; workspaces: WorkspaceSummary[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {

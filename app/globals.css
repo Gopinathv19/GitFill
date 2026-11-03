@@ -12,7 +12,7 @@
   --card-foreground: 0 0% 3.9%;
   --popover: 0 0% 100%;
   --popover-foreground: 0 0% 3.9%;
-  --primary: 161 94% 30%;
+  --primary: 163 94% 24%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 96.1%;
   --secondary-foreground: 0 0% 9%;
@@ -22,14 +22,14 @@
   --accent-foreground: 0 0% 9%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
-  --brand: 161 94% 30%;
+  --brand: 163 94% 24%;
   --brand-2: 172 66% 50%;
   --brand-foreground: 0 0% 100%;
-  --success: 161 94% 30%;
-  --warning: 32 95% 44%;
+  --success: 163 94% 24%;
+  --warning: 26 90% 35%;
   --border: 0 0% 89.8%;
   --input: 0 0% 89.8%;
-  --ring: 161 94% 30%;
+  --ring: 163 94% 24%;
   --radius: 0.625rem;
   --sidebar: 0 0% 98%;
   --sidebar-foreground: 0 0% 25%;
@@ -104,6 +104,7 @@
   --radius-sm: calc(var(--radius) - 4px);
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-display: var(--font-source-serif), ui-serif, Georgia, serif;
 }
 
 @layer base {
@@ -130,8 +131,8 @@
   overflow-wrap: anywhere;
 }
 .gf-prose > :first-child { margin-top: 0; }
-.gf-prose h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; margin: 1.6em 0 0.6em; line-height: 1.25; }
-.gf-prose h2 { font-size: 1.2rem; font-weight: 600; margin: 1.8em 0 0.6em; padding-bottom: 0.3em; border-bottom: 1px solid hsl(var(--border)); }
+.gf-prose h1 { font-family: var(--font-display); font-size: 1.65rem; font-weight: 500; letter-spacing: -0.01em; margin: 1.6em 0 0.6em; line-height: 1.25; }
+.gf-prose h2 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 500; margin: 1.8em 0 0.6em; padding-bottom: 0.3em; border-bottom: 1px solid hsl(var(--border)); }
 .gf-prose h3 { font-size: 1.02rem; font-weight: 600; margin: 1.4em 0 0.5em; }
 .gf-prose h4 { font-size: 0.92rem; font-weight: 600; margin: 1.2em 0 0.4em; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.75rem; }
 .gf-prose p { margin: 0.6em 0; }

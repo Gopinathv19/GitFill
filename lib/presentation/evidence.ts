@@ -1,10 +1,13 @@
 import { directorySummary, moduleGraph } from "@/lib/analysis/graph";
 import type { RepositoryContext } from "@/lib/agent/repo-tools";
+import { architectureFacts } from "./facts/architecture";
+import { runFacts } from "./facts/run";
 import type { Material } from "./spec";
 
 /**
  * Facts code computed from the repository, for deck prompts: HTTP routes, directories with file
- * counts and the module dependency graph. Diagrams drawn from these are true by construction;
+ * counts, the module dependency graph, circular dependencies and hotspots, and how to run the
+ * project (scripts, services, ports, env var names). Diagrams drawn from these are true by construction;
  * the deck writers are told to prefer them over prose when drawing architecture.
  */
 export function codeFacts(context: Pick<RepositoryContext, "snapshot" | "graph" | "routes">): string {
@@ -24,6 +27,8 @@ export function codeFacts(context: Pick<RepositoryContext, "snapshot" | "graph" 
     dirs.length ? `Directories:\n${dirs.join("\n")}` : "",
     edges.length ? `Module dependencies (measured from imports; use these for architecture edges):\n${edges.join("\n")}` : "",
     packages.length ? `Most imported external packages: ${packages.join(", ")}` : "",
+    architectureFacts(context.graph, { analyzedFiles: context.snapshot.files.length }),
+    runFacts(context.snapshot.files),
   ]
     .filter(Boolean)
     .join("\n\n");

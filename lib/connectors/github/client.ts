@@ -260,6 +260,42 @@ export class GitHubClient {
   }
 
   /**
+   * The first `maxBytes` of a file (front matter, headers), or null when it does not exist. Never
+   * fails because the file is larger: it stops reading instead.
+   */
+  async getFileHead(owner: string, repo: string, sha: string, path: string, maxBytes: number): Promise<string | null> {
+    assertSha(sha);
+    const encodedPath = path.split("/").map(seg).join("/");
+    let res: Response;
+    try {
+      res = await this.request(`https://raw.githubusercontent.com/${seg(owner)}/${seg(repo)}/${sha}/${encodedPath}`);
+    } catch (err) {
+      if (err instanceof GitHubError && err.code === "not_found") return null;
+      throw err;
+    }
+    if (!res.body) return "";
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+    await reader.cancel().catch(() => {});
+    const out = new Uint8Array(Math.min(total, maxBytes));
+    let offset = 0;
+    for (const c of chunks) {
+      const part = c.subarray(0, out.length - offset);
+      out.set(part, offset);
+      offset += part.byteLength;
+      if (offset >= out.length) break;
+    }
+    return new TextDecoder("utf-8", { fatal: false }).decode(out);
+  }
+
+  /**
    * Commits text files on top of a branch's head as one new commit on a new branch, then opens a
    * pull request into that branch. Nothing is pushed to the base branch itself.
    */

@@ -7,7 +7,7 @@ import { formatAttachments, type Attachment } from "./attachments";
  * history and the UI can render them as a card; no separate storage is needed.
  */
 export const askUserSchema = z.object({
-  intro: z.string().max(600).default("").describe("One or two sentences on what you found in the code that the questions build on."),
+  intro: z.string().max(1200).default("").describe("One or two sentences on what you found in the code that the questions build on; in the confirm round, the brief you will use."),
   questions: z
     .array(
       z.object({
@@ -46,8 +46,9 @@ export function questionRounds(history: Array<{ role: string; content: string; j
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i]!;
     if (m.role !== "assistant") continue;
-    if (m.jobIds?.length) break;
-    if (BLOCK.test(m.content)) rounds++;
+    // Only the rounds in a row count: a plain reply or an answer ends the intent loop.
+    if (m.jobIds?.length || !BLOCK.test(m.content)) break;
+    rounds++;
   }
   return rounds;
 }

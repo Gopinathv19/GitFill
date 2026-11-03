@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, BookOpen, ChevronDown, ChevronRight, FolderGit2, GitBranch, LayoutGrid, LogOut, PanelLeftClose, Plus, Presentation, Settings } from "lucide-react";
+import { Activity, BookOpen, ChevronDown, ChevronRight, FolderGit2, LayoutGrid, LogOut, PanelLeftClose, Plus, Presentation, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -118,28 +118,21 @@ export function AppSidebar({ user, stub, onCollapse }: { user: SessionUser; stub
         ))}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
-        {/* The product area. GitFill starts with Main; more areas join it here later. */}
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm" aria-hidden>
-            <GitBranch className="size-3.5" />
-          </span>
-          <span className="truncate text-sm font-semibold">Main</span>
-        </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button asChild variant="ghost" size="icon" className="size-8 text-muted-foreground">
-              <Link href="/settings" aria-label="Settings">
-                <Settings className="size-4" />
-              </Link>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">Settings</TooltipContent>
-        </Tooltip>
-        <ThemeToggle className="size-8 text-muted-foreground" />
+      <div className="flex shrink-0 items-center gap-1 border-t px-2 py-2">
+        <Link href="/settings" className={cn(navItem(navActive("/settings")), "min-w-0 flex-1")}>
+          <Settings className="size-4" />
+          Configuration
+        </Link>
+        <ThemeToggle className="size-8 shrink-0 text-muted-foreground" />
       </div>
     </div>
   );
+}
+
+/** Clears the session cookie, then leaves for the sign-in page (even if the request failed). */
+async function signOut() {
+  await fetch("/api/auth/logout", { method: "POST", redirect: "manual" }).catch(() => undefined);
+  window.location.href = "/login";
 }
 
 /** The signed-in account, top of the sidebar: name and avatar, with settings and sign-out. */
@@ -167,18 +160,15 @@ function AccountMenu({ user, stub }: { user: SessionUser; stub: boolean }) {
         <DropdownMenuItem asChild>
           <Link href="/settings">
             <Settings />
-            Settings
+            Configuration
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <form action="/api/auth/logout" method="post">
-          <DropdownMenuItem asChild className="text-destructive focus:text-destructive">
-            <button type="submit" className="w-full">
-              <LogOut />
-              Sign out
-            </button>
-          </DropdownMenuItem>
-        </form>
+        {/* Not a <form>: the menu unmounts its content on select, before a form could submit. */}
+        <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void signOut()}>
+          <LogOut />
+          Sign out
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

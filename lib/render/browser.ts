@@ -74,7 +74,14 @@ export async function browser(): Promise<Browser> {
     const b = await shared.catch(() => null);
     if (b?.isConnected()) return b;
   }
-  shared = chromium.launch({ executablePath: env().CHROMIUM_PATH || undefined, args: ["--font-render-hinting=none"] });
+  shared = chromium.launch({
+    executablePath: env().CHROMIUM_PATH || undefined,
+    args: ["--font-render-hinting=none"],
+    // The worker finishes its current job on SIGTERM; Chromium must stay up until it has.
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+    handleSIGINT: false,
+  });
   return shared.catch((err) => {
     shared = null;
     throw new RenderError(`Could not start Chromium: ${(err as Error).message.slice(0, 300)}. Install it with \`npx playwright-core install chromium\` or set CHROMIUM_PATH.`);

@@ -9,6 +9,7 @@ import { JOB_KIND_LABELS, JobStatusBadge, STAGE_LABELS, TERMINAL } from "@/compo
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useJob, type JobView } from "@/lib/client/use-job";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { cn } from "@/lib/utils";
 
 export const PIPELINES: Record<JobView["kind"], string[]> = {
@@ -26,6 +27,9 @@ export const PIPELINES: Record<JobView["kind"], string[]> = {
 export function JobWorkspace({ jobId }: { jobId: string }) {
   const router = useRouter();
   const { job, error, now } = useJob(jobId);
+  // The tab shows the job's state, so progress is visible from another tab.
+  const kindLabel = job ? (JOB_KIND_LABELS[job.kind] ?? job.kind) : null;
+  usePageTitle(!job ? null : !TERMINAL.has(job.status) ? `● Working · ${kindLabel}` : job.status === "completed" ? `✓ Done · ${kindLabel}` : `✕ Failed · ${kindLabel}`);
 
   if (!job) return <p className="text-sm text-muted-foreground">{error ?? "Loading job…"}</p>;
 

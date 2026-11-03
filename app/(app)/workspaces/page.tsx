@@ -10,9 +10,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/input";
 import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog";
 import { useWorkspaces } from "@/lib/client/workspaces-store";
+import { usePageTitle } from "@/lib/client/use-page-title";
 import { timeAgo } from "@/lib/utils";
 
 export default function WorkspacesPage() {
+  usePageTitle("Workspaces");
   const { data, error } = useWorkspaces();
 
   return (
