@@ -24,6 +24,11 @@ export interface Recording {
   stop(): Promise<Blob>;
   /** Stops and throws the audio away. */
   cancel(): void;
+  /**
+   * Everything recorded so far as mono 24 kHz samples (also after stop), for live transcription.
+   * Null when the browser cannot decode an unfinished recording.
+   */
+  samples(): Promise<Float32Array | null>;
   /** Input level 0..1, for a meter; call from requestAnimationFrame. */
   level(): number;
   readonly startedAt: number;
@@ -73,6 +78,10 @@ export async function startRecording(opts: { onAutoStop?: () => void } = {}): Pr
       for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
       return Math.min(1, peak / 64);
     },
+    async samples() {
+      if (!chunks.length) return null;
+      return decodeMono(new Blob(chunks, { type: recorder.mimeType || mime || "audio/webm" })).catch(() => null);
+    },
     async stop() {
       if (done) throw new VoiceError("Already stopped.");
       done = true;
@@ -95,6 +104,16 @@ export async function startRecording(opts: { onAutoStop?: () => void } = {}): Pr
 
 /** Any recording the browser can decode → mono 16-bit WAV at 24 kHz. */
 export async function toWav(blob: Blob): Promise<Blob> {
+  return wavOf(await decodeMono(blob));
+}
+
+/** Mono 24 kHz samples → the WAV the transcription model takes. */
+export function wavOf(samples: Float32Array): Blob {
+  return new Blob([new Uint8Array(encodeWav({ sampleRate: TARGET_RATE, samples }))], { type: "audio/wav" });
+}
+
+/** Any recording the browser can decode → mono samples at 24 kHz. */
+async function decodeMono(blob: Blob): Promise<Float32Array> {
   const ctx = new AudioContext();
   let decoded: AudioBuffer;
   try {
@@ -111,7 +130,7 @@ export async function toWav(blob: Blob): Promise<Blob> {
   source.connect(offline.destination);
   source.start();
   const rendered = await offline.startRendering();
-  return new Blob([new Uint8Array(encodeWav({ sampleRate: TARGET_RATE, samples: rendered.getChannelData(0) }))], { type: "audio/wav" });
+  return rendered.getChannelData(0);
 }
 
 /** Sends a WAV recording to the server and returns the text. */

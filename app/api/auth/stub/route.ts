@@ -1,6 +1,6 @@
 import { authMode } from "@/lib/config/env";
 import { getDb } from "@/lib/db";
-import { safeNext, signIn } from "@/lib/auth/current";
+import { DEMO_USER, safeNext, signIn } from "@/lib/auth/current";
 import { fail, handleError, publicOrigin } from "@/lib/http";
 
 /** POST /api/auth/stub — one-click demo sign-in for local testing. Disabled unless AUTH_MODE=stub. */
@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     const next = safeNext(form?.get("next")?.toString());
     return await signIn(
       getDb(),
-      { githubId: "stub:demo", login: "demo-user", name: "Demo User", email: "demo@gitfill.local", avatarUrl: null },
+      DEMO_USER,
       new URL(next, publicOrigin(req)).toString(),
     );
   } catch (err) {

@@ -5,13 +5,15 @@ import { ArrowUp, Check, Loader2, Mic, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { errorMessage } from "@/lib/client/api";
-import { MAX_RECORDING_SECONDS, startRecording, transcribeRecording, voiceSupported, VoiceError, type Recording } from "@/lib/client/voice";
+import { liveTranscribe, type LiveTranscript } from "@/lib/client/live-transcribe";
+import { MAX_RECORDING_SECONDS, startRecording, voiceSupported, VoiceError, type Recording } from "@/lib/client/voice";
 import { cn } from "@/lib/utils";
 
-type State = { kind: "idle" } | { kind: "starting" } | { kind: "recording"; rec: Recording } | { kind: "transcribing" };
+type State = { kind: "idle" } | { kind: "starting" } | { kind: "recording"; rec: Recording; live: LiveTranscript } | { kind: "transcribing" };
 
 /**
- * Voice input with Muse Voice Transcribe. Click the mic and speak; while recording, ✓ puts the
+ * Voice input with Muse Voice Transcribe, transcribed live: phrases appear above the mic as they are
+ * spoken (lib/client/live-transcribe.ts). Click the mic and speak; while recording, ✓ puts the
  * text into the box for review and ↑ (when `onSend` is given) sends it straight away, like asking
  * out loud. Escape cancels. Workspace repository names are sent as keywords so they are spelled right.
  */
@@ -34,6 +36,7 @@ export function DictateButton({
   const [error, setError] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
   const [elapsed, setElapsed] = useState(0);
+  const [heard, setHeard] = useState("");
   const meter = useRef<HTMLSpanElement>(null);
   const finish = useRef<(mode: "insert" | "send") => Promise<void>>(async () => undefined);
 
@@ -51,7 +54,7 @@ export function DictateButton({
     frame = requestAnimationFrame(tick);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        state.rec.cancel();
+        state.live.cancel();
         setState({ kind: "idle" });
       }
     };
@@ -65,7 +68,7 @@ export function DictateButton({
   // Never leave the microphone on when the component goes away.
   const current = useRef(state);
   current.current = state;
-  useEffect(() => () => (current.current.kind === "recording" ? current.current.rec.cancel() : undefined), []);
+  useEffect(() => () => (current.current.kind === "recording" ? current.current.live.cancel() : undefined), []);
 
   async function start() {
     setError(null);
@@ -73,7 +76,8 @@ export function DictateButton({
     try {
       const rec = await startRecording({ onAutoStop: () => void finish.current("insert") });
       setElapsed(0);
-      setState({ kind: "recording", rec });
+      setHeard("");
+      setState({ kind: "recording", rec, live: liveTranscribe(rec, { workspaceId, onText: setHeard }) });
     } catch (err) {
       setError(err instanceof VoiceError ? err.message : "The microphone could not be opened.");
       setState({ kind: "idle" });
@@ -85,14 +89,14 @@ export function DictateButton({
     if (s.kind !== "recording") return;
     setState({ kind: "transcribing" });
     try {
-      const wav = await s.rec.stop();
-      const text = (await transcribeRecording(wav, workspaceId)).trim();
+      const text = (await s.live.finish()).trim();
       if (!text) setError("No speech was recognised. Try again a little closer to the mic.");
       else if (mode === "send" && onSend) onSend(text);
       else onText(text);
     } catch (err) {
       setError(err instanceof VoiceError ? err.message : errorMessage(err, "Transcription failed; try again."));
     } finally {
+      setHeard("");
       setState({ kind: "idle" });
     }
   };
@@ -100,10 +104,19 @@ export function DictateButton({
   if (!supported) return null;
   const icon = size === "sm" ? "size-7" : "size-9";
 
+  // What has been heard so far, above the mic while recording and while the last phrase finishes.
+  const transcript = heard && (state.kind === "recording" || state.kind === "transcribing") && (
+    <p aria-live="polite" className="absolute bottom-full left-0 z-20 mb-2 max-h-32 w-[min(32rem,80vw)] overflow-y-auto rounded-lg border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md">
+      {heard}
+      {state.kind === "transcribing" && <Loader2 className="ml-1.5 inline size-3.5 animate-spin text-muted-foreground" />}
+    </p>
+  );
+
   if (state.kind === "recording") {
     const left = MAX_RECORDING_SECONDS - elapsed;
     return (
-      <div className={cn("flex shrink-0 items-center gap-1 rounded-full border border-destructive/40 bg-destructive/5 py-0.5 pl-2.5 pr-0.5", className)} role="group" aria-label="Recording">
+      <div className={cn("relative flex shrink-0 items-center gap-1 rounded-full border border-destructive/40 bg-destructive/5 py-0.5 pl-2.5 pr-0.5", className)} role="group" aria-label="Recording">
+        {transcript}
         <span className="relative flex size-2.5">
           <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-60" />
           <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
@@ -115,7 +128,7 @@ export function DictateButton({
           <span ref={meter} className="block h-full origin-left rounded-full bg-destructive transition-transform duration-75" />
         </span>
         {left <= 30 && <span className="text-[11px] text-destructive">{left}s left</span>}
-        <Button type="button" size="icon" variant="ghost" className="size-7 rounded-full" aria-label="Cancel recording" onClick={() => (state.rec.cancel(), setState({ kind: "idle" }))}>
+        <Button type="button" size="icon" variant="ghost" className="size-7 rounded-full" aria-label="Cancel recording" onClick={() => (state.live.cancel(), setState({ kind: "idle" }))}>
           <X className="size-3.5" />
         </Button>
         <Button type="button" size="icon" variant="ghost" className="size-7 rounded-full" aria-label="Stop and insert the text" onClick={() => void finish.current("insert")}>
@@ -132,6 +145,7 @@ export function DictateButton({
 
   return (
     <div className={cn("relative shrink-0", className)}>
+      {transcript}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

@@ -9,6 +9,9 @@ export class UnauthorizedError extends Error {
   override name = "UnauthorizedError";
 }
 
+/** The one-click demo account (AUTH_MODE=stub); everyone else signed in with GitHub. */
+export const DEMO_USER = { githubId: "stub:demo", login: "demo-user", name: "Demo User", email: "demo@gitfill.local", avatarUrl: null };
+
 export async function getSessionUser(): Promise<SessionUser | null> {
   return verifySessionToken((await cookies()).get(SESSION_COOKIE)?.value);
 }
