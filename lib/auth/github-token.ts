@@ -12,6 +12,7 @@ import { generationJobs, projects, users, workspaces } from "@/lib/db/schema";
  */
 const ALGO = "aes-256-gcm";
 const VERSION = "v1";
+const TAG_BYTES = 16;
 
 function key(): Buffer {
   const e = env();
@@ -25,7 +26,7 @@ function key(): Buffer {
 
 export function encryptSecret(plain: string): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv(ALGO, key(), iv);
+  const cipher = createCipheriv(ALGO, key(), iv, { authTagLength: TAG_BYTES });
   const data = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   return [VERSION, iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), data.toString("base64url")].join(".");
 }
@@ -33,8 +34,11 @@ export function encryptSecret(plain: string): string {
 export function decryptSecret(stored: string): string {
   const [version, iv, tag, data] = stored.split(".");
   if (version !== VERSION || !iv || !tag || !data) throw new Error("Unrecognized encrypted token format.");
-  const decipher = createDecipheriv(ALGO, key(), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  const authTag = Buffer.from(tag, "base64url");
+  // Pin the tag length so a truncated tag cannot be accepted (GCM forgery).
+  if (authTag.length !== TAG_BYTES) throw new Error("Invalid encrypted token tag.");
+  const decipher = createDecipheriv(ALGO, key(), Buffer.from(iv, "base64url"), { authTagLength: TAG_BYTES });
+  decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(Buffer.from(data, "base64url")), decipher.final()]).toString("utf8");
 }
 

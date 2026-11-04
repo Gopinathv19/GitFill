@@ -345,7 +345,7 @@ describe("runFacts", () => {
   it("never reads lines of a multi-line env value, such as a pasted private key, as names", () => {
     const body = "MIIEowIBAAKCAQEAx4abcDEFghiJKLmnoPQRstuVWXyz0123456789abcdefABCD";
     const env = [
-      `PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----`,
+      `PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----`, // gitleaks:allow (fake test fixture)
       `${body}=`,
       `-----END RSA PRIVATE KEY-----"`,
       "RAW_KEY=-----BEGIN PRIVATE KEY-----",
@@ -363,7 +363,7 @@ describe("runFacts", () => {
   it("masks credentials inlined in quoted commands", () => {
     const scripts = {
       seed: "DATABASE_URL=postgres://admin:Sup3rS3cretPw@prod.db/app node seed.js",
-      deploy: "STRIPE_KEY=sk_live_abcdef1234567890XYZ vercel",
+      deploy: "STRIPE_KEY=sk_live_abcdef1234567890XYZ vercel", // gitleaks:allow (fake test fixture)
     };
     const out = runFacts([file("package.json", JSON.stringify({ scripts }))]);
     expect(out).toContain("- npm run seed → DATABASE_URL=postgres://admin:");

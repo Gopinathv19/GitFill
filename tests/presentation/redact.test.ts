@@ -17,7 +17,7 @@ const STRIPE_TEST = join("sk", "_test_", "51Hx2Jk3Lm4Np5Qr6St7Uv8W");
 const STRIPE_RESTRICTED = join("rk", "_live_", "9Zy8Xw7Vu6Ts5Rq4Po3Nm2Lk");
 const GOOGLE = join("AI", "za", "Sy", "A1b2C3d4E5".repeat(3), "f6G");
 const OPENAI = join("sk-", "proj-", "Ab12Cd34Ef56Gh78Ij90Kl12Mn34");
-const ANTHROPIC = join("sk-", "ant-", "api03-", "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Jh1");
+const ANTHROPIC = join("sk-", "ant-", "api03-", "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Jh1"); // gitleaks:allow (fake test fixture)
 const JWT = join("eyJ", "hbGciOiJIUzI1NiJ9", ".", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", ".", "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U");
 const PEM_BEGIN = join("-----BEGIN ", "PRIVATE KEY-----");
 const PEM_END = join("-----END ", "PRIVATE KEY-----");
@@ -107,9 +107,9 @@ describe("redactText: credential formats", () => {
 describe("redactText: secret-named assignments", () => {
   const cases: [string, string][] = [
     ['password = "hunter2hunter2"', 'password = "••••••••"'],
-    ["DB_PASSWORD=Xk9mP2qR7vT4", "DB_PASSWORD=••••••••"],
-    ["  client_secret: aB3dE5fG7hJ9kL1m", "  client_secret: ••••••••"],
-    ['{"api_key": "Ab12-Cd34-Ef56"}', '{"api_key": "••••••••"}'],
+    ["DB_PASSWORD=Xk9mP2qR7vT4", "DB_PASSWORD=••••••••"], // gitleaks:allow
+    ["  client_secret: aB3dE5fG7hJ9kL1m", "  client_secret: ••••••••"], // gitleaks:allow
+    ['{"api_key": "Ab12-Cd34-Ef56"}', '{"api_key": "••••••••"}'], // gitleaks:allow
     ["$apiKey = 'MySecretPassword';", "$apiKey = '••••••••';"],
     ["'passwd' => 'P@ssw0rd!',", "'passwd' => '••••••••',"],
     ['SECRET_KEY: str = "django-insecure-7x#k2m"', 'SECRET_KEY: str = "••••••••"'],
@@ -117,7 +117,7 @@ describe("redactText: secret-named assignments", () => {
     ["export ACCESS_KEY=p@ss-W0rd-2024", "export ACCESS_KEY=••••••••"],
     ["auth: Basic dXNlcjpwYXNzd29yZA==", "auth: Basic ••••••••"],
     ["https://api.acme.dev/v1/items?api_key=a1b2c3d4e5f6&page=2", "https://api.acme.dev/v1/items?api_key=••••••••&page=2"],
-    ['private_key="aB3/xY+9kL2mN4pQ6rS8tU0v=="', 'private_key="••••••••"'],
+    ['private_key="aB3/xY+9kL2mN4pQ6rS8tU0v=="', 'private_key="••••••••"'], // gitleaks:allow
   ];
   for (const [input, expected] of cases) {
     it(`masks only the literal in ${input}`, () => {
@@ -196,7 +196,7 @@ describe("redactText: leaves everything else alone", () => {
     "const X509_SUBJECT_TOKEN = 'urn:ietf:params:oauth:token-type:jwt';",
     `Keys are stored as ${PEM_BEGIN} files on disk`,
     "max_tokens: 4096",
-    "passwordHash: bcrypt12rounds",
+    "passwordHash: bcrypt12rounds", // gitleaks:allow
     "Bearer tokens are verified by the middleware",
     "task-management-dashboard-for-teams-2024",
     // package.json versions under secret-named packages, translated labels, enum values
