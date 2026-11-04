@@ -42,6 +42,7 @@
     "playwright-core": "1.47.2",
     "postgres": "^3.4.9",
     "pptxgenjs": "^4.0.1",
+    "re2js": "2.9.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-markdown": "^10.1.0",

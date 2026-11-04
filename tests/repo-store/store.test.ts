@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DirArchiveCache } from "@/lib/repo-store/archive-cache";
-import { globToRegExp, SnapshotSource } from "@/lib/repo-store/code-source";
+import { compileGlob, SnapshotSource } from "@/lib/repo-store/code-source";
 import { LocalGitStore } from "@/lib/repo-store/git-store";
 import { RemoteRepoStore } from "@/lib/repo-store/remote";
 import { createRepoService } from "@/lib/repo-store/service";
@@ -130,12 +130,44 @@ describe("SnapshotSource", () => {
   });
 });
 
-describe("globToRegExp", () => {
+describe("compileGlob", () => {
   it("matches common globs", () => {
-    expect(globToRegExp("*.ts").test("lib/a/b.ts")).toBe(true);
-    expect(globToRegExp("lib/**/*.ts").test("lib/a/b.ts")).toBe(true);
-    expect(globToRegExp("lib/**/*.ts").test("lib/b.ts")).toBe(true);
-    expect(globToRegExp("lib/*.ts").test("lib/a/b.ts")).toBe(false);
-    expect(globToRegExp("*.{ts,tsx}").test("x/y.tsx")).toBe(true);
+    expect(compileGlob("*.ts").test("lib/a/b.ts")).toBe(true);
+    expect(compileGlob("lib/**/*.ts").test("lib/a/b.ts")).toBe(true);
+    expect(compileGlob("lib/**/*.ts").test("lib/b.ts")).toBe(true);
+    expect(compileGlob("lib/*.ts").test("lib/a/b.ts")).toBe(false);
+    expect(compileGlob("*.{ts,tsx}").test("x/y.tsx")).toBe(true);
+    expect(compileGlob("*.{ts,tsx}").test("x/y.js")).toBe(false);
+    expect(compileGlob("src/{a,b}/*.ts").test("src/b/x.ts")).toBe(true);
+    expect(compileGlob("src/**").test("src/a/b/c.md")).toBe(true);
+    expect(compileGlob("**/test/*.ts").test("test/x.ts")).toBe(true);
+    expect(compileGlob("?.ts").test("lib/a.ts")).toBe(true);
+    expect(compileGlob("?.ts").test("lib/ab.ts")).toBe(false);
+    expect(compileGlob("a.ts").test("lib/xa.ts")).toBe(false);
+    expect(compileGlob("lib/a.ts").test("x/lib/a.ts")).toBe(false);
+  });
+
+  it("stays fast on pathological globs (no ReDoS)", () => {
+    const started = Date.now();
+    expect(compileGlob("**/".repeat(30) + "x.ts").test("a/".repeat(100) + "y.ts")).toBe(false);
+    expect(compileGlob("*a".repeat(40)).test("a".repeat(300) + "b")).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("SnapshotSource.grep", () => {
+  const file = (p: string, content: string) => ({ path: p, category: "source" as const, sizeBytes: content.length, content, lineCount: content.split("\n").length });
+  const source = new SnapshotSource({ displayName: "acme/demo", version: "local", files: [file("src/a.ts", `${"a".repeat(50_000)}!\nconst Total = 1;\n`)], inventory: [] });
+
+  it("runs a catastrophic-backtracking pattern in linear time (no ReDoS)", async () => {
+    const started = Date.now();
+    expect((await source.grep("(a+)+$")).hits).toHaveLength(0);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("supports ignore-case, literal search and rejects invalid patterns", async () => {
+    expect((await source.grep("total = \\d", { ignoreCase: true })).hits.map((h) => h.line)).toEqual([2]);
+    expect((await source.grep("Total = 1;", { fixed: true })).hits).toHaveLength(1);
+    await expect(source.grep("(unclosed")).rejects.toThrow();
   });
 });

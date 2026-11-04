@@ -138,7 +138,7 @@ export async function runChatTurn(db: Database, userId: string, workspaceId: str
       // Errors written for users (no access, nothing to deliver, GitHub refused) go to the model as they are.
       if (err instanceof ActionError || err instanceof DeliveryError || err instanceof GitHubError || err instanceof AppNotInstalledError) return { error: err.message };
       // Unexpected failures (database, network) are logged for the operator; the model gets a plain message.
-      console.error(`chat tool failed: ${fallback}`, err);
+      console.error("chat tool failed: %s", fallback, err);
       return { error: `${fallback} This is a server-side problem, not something to work around: tell the user it failed and do not start other work instead.` };
     }
   };

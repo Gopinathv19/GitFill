@@ -1,6 +1,11 @@
 import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+/** GCP metadata server host; GCE_METADATA_HOST overrides it the same way Google's client libraries allow. */
+export function metadataHost(): string {
+  return process.env.GCE_METADATA_HOST || "metadata.google.internal";
+}
+
 /**
  * Second-level cache of whole bare repositories (tar files), shared by every instance of the repo
  * service. A new or restarted instance restores a repository from here instead of fetching it from
@@ -74,9 +79,8 @@ export class GcsArchiveCache implements ArchiveCache {
   private async accessToken(): Promise<string> {
     if (process.env.GCS_ACCESS_TOKEN) return process.env.GCS_ACCESS_TOKEN;
     if (this.token && this.token.expires > Date.now() + 60_000) return this.token.value;
-    // The GCP metadata server is link-local and only serves plain HTTP; it never leaves the VM.
-    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
-    const res = await fetch("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) });
+    // The GCP metadata server is link-local and only serves plain HTTP; the request never leaves the VM.
+    const res = await fetch(`http://${metadataHost()}/computeMetadata/v1/instance/service-accounts/default/token`, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) });
     if (!res.ok) throw new Error(`metadata token request failed (${res.status})`);
     const body = (await res.json()) as { access_token: string; expires_in: number };
     this.token = { value: body.access_token, expires: Date.now() + body.expires_in * 1000 };

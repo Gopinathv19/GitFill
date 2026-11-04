@@ -348,7 +348,7 @@ describe("runFacts", () => {
       `PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----`, // gitleaks:allow (fake test fixture)
       `${body}=`,
       `-----END RSA PRIVATE KEY-----"`,
-      "RAW_KEY=-----BEGIN PRIVATE KEY-----",
+      "RAW_KEY=-----BEGIN PRIVATE KEY-----", // gitleaks:allow (fake test fixture)
       `${body.split("").reverse().join("")}=`,
       "-----END PRIVATE KEY-----",
       `${body.slice(0, 30)}=x`,

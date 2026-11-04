@@ -86,13 +86,12 @@ export interface Reference {
 /** Whole-word occurrences of an identifier across the snapshot (bounded). */
 export function findReferences(files: SourceFile[], name: string, opts: { limit?: number; excludePath?: string } = {}): Reference[] {
   const limit = opts.limit ?? 60;
-  const re = new RegExp(`(?<![\\w$])${escapeRegExp(name)}(?![\\w$])`);
   const out: Reference[] = [];
   for (const f of files) {
     if (f.path === opts.excludePath) continue;
     const lines = f.content.split("\n");
     for (let i = 0; i < lines.length && out.length < limit; i++) {
-      if (re.test(lines[i]!)) out.push({ path: f.path, line: i + 1, text: lines[i]!.trim().slice(0, 160) });
+      if (hasWholeWord(lines[i]!, name)) out.push({ path: f.path, line: i + 1, text: lines[i]!.trim().slice(0, 160) });
     }
     if (out.length >= limit) break;
   }
@@ -207,6 +206,15 @@ function collapse(p: string, depth: number): string {
   return parts.length <= depth ? p : parts.slice(0, depth).join("/");
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const IDENT_CHAR = /[\w$]/;
+
+/** True when `word` occurs in `line` not preceded or followed by an identifier character. Plain indexOf, no RegExp built from input. */
+function hasWholeWord(line: string, word: string): boolean {
+  if (!word) return false;
+  for (let at = line.indexOf(word); at !== -1; at = line.indexOf(word, at + 1)) {
+    const before = at > 0 ? line[at - 1]! : "";
+    const after = line[at + word.length] ?? "";
+    if (!IDENT_CHAR.test(before) && !IDENT_CHAR.test(after)) return true;
+  }
+  return false;
 }

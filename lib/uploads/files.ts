@@ -162,11 +162,19 @@ export async function readPptx(bytes: Buffer): Promise<PptxInfo> {
 }
 
 /** dk1/lt1/dk2/lt2/accent1-6 from <a:clrScheme>, as #rrggbb. */
+/** Text between the first `open` and the next `close` after it (indexOf, no RegExp built from input). */
+function between(text: string, open: string, close: string): string | undefined {
+  const start = text.indexOf(open);
+  if (start === -1) return undefined;
+  const end = text.indexOf(close, start + open.length);
+  return end === -1 ? undefined : text.slice(start + open.length, end);
+}
+
 export function themeColors(xml: string): Record<string, string> {
   const scheme = /<a:clrScheme[\s\S]*?<\/a:clrScheme>/.exec(xml)?.[0] ?? "";
   const out: Record<string, string> = {};
   for (const name of ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"]) {
-    const el = new RegExp(`<a:${name}>([\\s\\S]*?)</a:${name}>`).exec(scheme)?.[1] ?? "";
+    const el = between(scheme, `<a:${name}>`, `</a:${name}>`) ?? "";
     const hex = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(el)?.[1] ?? /lastClr="([0-9A-Fa-f]{6})"/.exec(el)?.[1];
     if (hex) out[name] = `#${hex.toLowerCase()}`;
   }
@@ -174,7 +182,10 @@ export function themeColors(xml: string): Record<string, string> {
 }
 
 export function themeFonts(xml: string): { heading?: string; body?: string } {
-  const latin = (tag: string) => new RegExp(`<a:${tag}>[\\s\\S]*?<a:latin typeface="([^"]+)"`).exec(xml)?.[1];
+  const latin = (tag: string) => {
+    const start = xml.indexOf(`<a:${tag}>`);
+    return start === -1 ? undefined : /<a:latin typeface="([^"]+)"/.exec(xml.slice(start))?.[1];
+  };
   const clean = (f: string | undefined) => (f && /^[A-Za-z0-9 \-]{2,40}$/.test(f) && !f.startsWith("+") ? f : undefined);
   return { heading: clean(latin("majorFont")), body: clean(latin("minorFont")) };
 }

@@ -22,5 +22,9 @@ RUN npx playwright-core install --with-deps chromium && rm -rf /var/lib/apt/list
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 EXPOSE 8080
+# Liveness probe for Docker/Compose (Cloud Run uses its own probes and ignores this). The start
+# period covers migrations and Next.js start-up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 # Runs migrations, then the web server and the job worker side by side.
 CMD ["sh", "-c", "npm run db:migrate && npx concurrently -k -n web,worker \"npx next start -p $PORT\" \"npm run worker\""]

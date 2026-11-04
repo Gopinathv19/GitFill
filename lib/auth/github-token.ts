@@ -75,7 +75,7 @@ export async function getGitHubToken(db: Database, userId: string): Promise<stri
   try {
     return decryptSecret(row.enc);
   } catch (err) {
-    console.error(`[github] could not decrypt token for user ${userId}:`, err instanceof Error ? err.message : err);
+    console.error("[github] could not decrypt token for user %s:", userId, err instanceof Error ? err.message : err);
     return null;
   }
 }

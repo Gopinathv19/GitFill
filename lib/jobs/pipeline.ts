@@ -83,7 +83,7 @@ export async function runJob(db: Database, job: Job): Promise<void> {
     const message = publicErrorMessage(err);
     await recorder.finish("failed", message);
     await db.update(generationJobs).set({ status: "failed", errorMessage: message, completedAt: new Date() }).where(eq(generationJobs.id, job.id));
-    console.error(`[job ${job.id}] failed:`, err);
+    console.error("[job %s] failed:", job.id, err);
   }
 }
 

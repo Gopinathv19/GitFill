@@ -64,7 +64,7 @@ async function main() {
   await writeFile(path.join(out, "final.mp4"), result.mp4);
   await writeFile(path.join(out, "final-thumbnail.png"), result.thumbnail);
   console.log(`done in ${((Date.now() - t0) / 1000).toFixed(0)}s; tokens in ${recorder.usage.inputTokens} out ${recorder.usage.outputTokens}`);
-  console.log(result.draft.title, "\n", result.draft.summary, "\n", result.probe);
+  console.log("%s\n%s\n", result.draft.title, result.draft.summary, result.probe);
   await closeBrowser();
   process.exit(0);
 }

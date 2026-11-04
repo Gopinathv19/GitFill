@@ -1,3 +1,4 @@
+import { RE2JS } from "re2js";
 import { exclusionReason } from "@/lib/connectors/github/filter";
 import type { SourceSnapshot } from "@/lib/connectors/types";
 import { git, GitError } from "./git";
@@ -20,34 +21,73 @@ export function cleanPath(path: string): string | null {
   return p;
 }
 
-/** Minimal glob: `**` any path, `*` within a segment, `?` one char, `{a,b}` alternatives. */
-export function globToRegExp(glob: string): RegExp {
-  let re = "";
+/** Glob tokens: a literal character, or one of the wildcards below. */
+type GlobToken = string | typeof STAR | typeof GLOBSTAR | typeof GLOBSTAR_DIR | typeof ONE;
+const STAR = 0; // `*`: any run of characters within one path segment
+const GLOBSTAR = 1; // `**`: any run of characters, across segments
+const GLOBSTAR_DIR = 2; // `**/`: zero or more whole directories
+const ONE = 3; // `?`: one character other than "/"
+const MAX_GLOB_ALTERNATIVES = 64;
+
+export interface GlobMatcher {
+  test(path: string): boolean;
+}
+
+/**
+ * Minimal glob: `**` any path, `*` within a segment, `?` one char, `{a,b}` alternatives.
+ * Matched with a dynamic-programming table instead of a RegExp, so a model-supplied glob
+ * runs in O(path × glob) time and cannot cause catastrophic backtracking (ReDoS).
+ */
+export function compileGlob(glob: string): GlobMatcher {
+  let alternatives: GlobToken[][] = [[]];
+  const push = (...t: GlobToken[]) => alternatives.forEach((a) => a.push(...t));
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
     if (c === "*") {
       if (glob[i + 1] === "*") {
-        re += glob[i + 2] === "/" ? "(?:.*/)?" : ".*";
+        push(glob[i + 2] === "/" ? GLOBSTAR_DIR : GLOBSTAR);
         i += glob[i + 2] === "/" ? 2 : 1;
-      } else re += "[^/]*";
-    } else if (c === "?") re += "[^/]";
-    else if (c === "{") {
+      } else push(STAR);
+    } else if (c === "?") push(ONE);
+    else if (c === "{" && glob.indexOf("}", i) !== -1) {
       const end = glob.indexOf("}", i);
-      if (end === -1) re += "\\{";
-      else {
-        re += `(?:${glob.slice(i + 1, end).split(",").map((s) => s.replace(/[.+^$()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})`;
-        i = end;
-      }
-    } else re += /[.+^$()|[\]\\]/.test(c) ? `\\${c}` : c;
+      const options = glob.slice(i + 1, end).split(",").map((s) => [...s].map((ch): GlobToken => (ch === "*" ? STAR : ch)));
+      alternatives = alternatives.flatMap((a) => options.map((o) => [...a, ...o])).slice(0, MAX_GLOB_ALTERNATIVES);
+      i = end;
+    } else push(c);
   }
   // A glob without "/" matches the file name anywhere, like most search tools.
-  return glob.includes("/") ? new RegExp(`^${re}$`) : new RegExp(`(^|/)${re}$`);
+  if (!glob.includes("/")) alternatives.forEach((a) => a.unshift(GLOBSTAR_DIR));
+  return { test: (path) => alternatives.some((tokens) => globMatches(tokens, path)) };
+}
+
+/** next[j] = "tokens after this one match path[j..]"; filled from the last token backwards. */
+function globMatches(tokens: GlobToken[], s: string): boolean {
+  const n = s.length;
+  let next = new Array<boolean>(n + 1).fill(false);
+  next[n] = true;
+  for (let t = tokens.length - 1; t >= 0; t--) {
+    const tok = tokens[t]!;
+    const cur = new Array<boolean>(n + 1).fill(false);
+    let dirAhead = false; // some "/" at k >= j with next[k + 1]
+    for (let j = n; j >= 0; j--) {
+      if (tok === STAR) cur[j] = next[j]! || (j < n && s[j] !== "/" && cur[j + 1]!);
+      else if (tok === GLOBSTAR) cur[j] = next[j]! || (j < n && cur[j + 1]!);
+      else if (tok === GLOBSTAR_DIR) {
+        if (j < n && s[j] === "/" && next[j + 1]) dirAhead = true;
+        cur[j] = next[j]! || dirAhead;
+      } else if (tok === ONE) cur[j] = j < n && s[j] !== "/" && next[j + 1]!;
+      else cur[j] = j < n && s[j] === tok && next[j + 1]!;
+    }
+    next = cur;
+  }
+  return next[0]!;
 }
 
 function filterList(all: string[], opts: ListOptions): { paths: string[]; total: number } {
   const dir = opts.dir ? cleanPath(opts.dir) : "";
   if (dir === null) return { paths: [], total: 0 };
-  const glob = opts.glob ? globToRegExp(opts.glob) : null;
+  const glob = opts.glob ? compileGlob(opts.glob) : null;
   const matched = all.filter((p) => (!dir || p === dir || p.startsWith(`${dir}/`)) && (!glob || glob.test(p)));
   return { paths: matched.slice(0, opts.limit ?? 300), total: matched.length };
 }
@@ -169,9 +209,11 @@ export class SnapshotSource implements CodeSource {
   }
 
   async grep(pattern: string, opts: GrepOptions = {}) {
-    let re: RegExp;
+    // Model-supplied patterns run on RE2 (linear time, no backtracking), so a pathological
+    // regex cannot block the event loop (ReDoS). RE2 syntax is close to the ERE that git grep uses.
+    let re: { test(line: string): boolean };
     try {
-      re = new RegExp(opts.fixed ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern, opts.ignoreCase ? "i" : "");
+      re = RE2JS.compile(opts.fixed ? RE2JS.quote(pattern) : pattern, opts.ignoreCase ? RE2JS.CASE_INSENSITIVE : 0);
     } catch (err) {
       throw new InvalidPatternError(err instanceof Error ? err.message : "invalid pattern");
     }

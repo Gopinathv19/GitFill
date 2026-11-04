@@ -1,3 +1,4 @@
+import { metadataHost } from "./archive-cache";
 import { InvalidPatternError, RepoStoreError, validateOpen, type CodeSource, type FileRead, type GrepHit, type GrepOptions, type ListOptions, type OpenRequest, type OpenResult, type RepoStore } from "./types";
 
 /**
@@ -20,9 +21,8 @@ export class RemoteRepoStore implements RepoStore {
     if (!this.baseUrl.startsWith("https://")) return {};
     if (!this.idToken || this.idToken.expires < Date.now() + 60_000) {
       const audience = new URL(this.baseUrl).origin;
-      // The GCP metadata server is link-local and only serves plain HTTP; it never leaves the VM.
-      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
-      const res = await fetch(`http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) }).catch(() => null);
+      // The GCP metadata server is link-local and only serves plain HTTP; the request never leaves the VM.
+      const res = await fetch(`http://${metadataHost()}/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) }).catch(() => null);
       // Outside Google Cloud there is no metadata server: rely on the service token alone.
       if (!res?.ok) return {};
       this.idToken = { value: await res.text(), expires: Date.now() + 50 * 60_000 };

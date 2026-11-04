@@ -85,7 +85,7 @@ class MemoraRetriever implements SnapshotRetriever {
       states.set(this.key, { subjectId, status: ready ? "ready" : "indexing", checkedAt: Date.now() });
       return ready ? "ready" : "indexing";
     } catch (err) {
-      console.warn(`[memora] indexing ${this.key} failed:`, err instanceof Error ? err.message : err);
+      console.warn("[memora] indexing %s failed:", this.key, err instanceof Error ? err.message : err);
       states.set(this.key, { subjectId: cached?.subjectId ?? "", status: "unavailable", checkedAt: Date.now() });
       return "unavailable";
     }

@@ -61,6 +61,10 @@ export function uniqueFootnotes(markdown: string): string {
     .join("\n");
 }
 
+/** A "**Title**" line followed by a markdown list; group 1 is the leading newline, group 2 the list. */
+const SOURCES_SECTION = /(^|\n)\*\*Sources\*\*[ \t]*\n+((?:[ \t]*[-*] .*(?:\n|$))+)/;
+const FOLLOW_UPS_SECTION = /(^|\n)\*\*You could ask next\*\*[ \t]*\n+((?:[ \t]*[-*] .*(?:\n|$))+)/;
+
 export function splitAnswer(markdown: string): AnswerParts {
   const evidence: EvidenceItem[] = [];
   const kept: string[] = [];
@@ -90,8 +94,8 @@ export function splitAnswer(markdown: string): AnswerParts {
     return "";
   });
 
-  const sources = takeSection("Sources");
-  const followUps = (takeSection("You could ask next") ?? "")
+  const sources = takeSection(SOURCES_SECTION);
+  const followUps = (takeSection(FOLLOW_UPS_SECTION) ?? "")
     .split("\n")
     .map((l) => /^\s*[-*]\s+(.+)$/.exec(l)?.[1]?.trim())
     .filter((q): q is string => Boolean(q));
@@ -103,9 +107,9 @@ export function splitAnswer(markdown: string): AnswerParts {
   return { body: body.replace(/\n{3,}/g, "\n\n").trim(), evidence, sources, followUps, footer };
 
   /** Removes a "**Title**" block followed by a list, returning the list. */
-  function takeSection(title: string): string | null {
+  function takeSection(section: RegExp): string | null {
     let found: string | null = null;
-    body = body.replace(new RegExp(`(^|\\n)\\*\\*${title}\\*\\*[ \\t]*\\n+((?:[ \\t]*[-*] .*(?:\\n|$))+)`), (_, lead: string, list: string) => {
+    body = body.replace(section, (_, lead: string, list: string) => {
       found = list.trim();
       return lead;
     });
